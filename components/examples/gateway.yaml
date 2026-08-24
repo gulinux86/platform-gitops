@@ -33,10 +33,9 @@ spec:
               gateway-access: "true"
 ---
 # Smallest possible proof that the path works: Gateway → HTTPRoute → Service.
-# It routes to a Service that does not exist yet, so the route will report a
-# resolution failure until something backs it. That is deliberate — the point is
-# to confirm the Gateway is programmed and the CRDs are wired, not to run an app.
-# Applications belong in the separate app repository.
+# It routes to the demo backend in app-demo, which exists purely so this path can
+# be proven end to end: Gateway → HTTPRoute → Service → pod, through the mesh.
+# Real applications belong in the separate app repository.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -52,4 +51,24 @@ spec:
             value: /healthz
       backendRefs:
         - name: example-app
+          namespace: app-demo
           port: 80
+---
+# Cross-namespace references are denied by default in Gateway API, and that is the
+# whole point: without this, any route in any namespace could send traffic to any
+# service anywhere. The grant is issued by the *target* namespace — app-demo
+# decides who may reach it, not the other way round.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-ingress-routes
+  namespace: app-demo
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: istio-ingress
+  to:
+    - group: ""
+      kind: Service
+      name: example-app

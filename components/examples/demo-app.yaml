@@ -1,0 +1,73 @@
+# A minimal backend so the example route resolves.
+#
+# Without it the HTTPRoute reports BackendNotFound and the Application sits
+# Degraded forever — and a dashboard with a permanent red mark trains people to
+# ignore red marks. With it, the path is proven end to end: Gateway → HTTPRoute →
+# Service → pod, through the ambient mesh.
+#
+# It lives in the platform repository, not the application one, because it is not
+# an application: it is the smoke test for the traffic path. Delete it once real
+# workloads route through the gateway.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-demo
+  labels:
+    # Opts this namespace into the ambient mesh. Without it the pods run fine and
+    # simply never join — no sidecar to be missing, no error, just traffic that
+    # bypasses ztunnel. That silence is why ambient needs the label checked
+    # explicitly rather than assumed.
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: app-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: nginx
+          # Pinned by digest-bearing tag rather than `latest`: an image that can
+          # change under a fixed manifest defeats the point of GitOps.
+          image: public.ecr.aws/nginx/nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 101 # nginx user in the alpine image
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # The HTTPRoute's backendRef names this service. A mismatch here is exactly what
+  # BackendNotFound was reporting.
+  name: example-app
+  namespace: app-demo
+spec:
+  selector:
+    app: demo
+  ports:
+    - port: 80
+      targetPort: 80
