@@ -1,0 +1,34 @@
+# istio-base — wave 2. CRDs and cluster roles only, no workloads.
+#
+# Everything else in Istio is an instance of something declared here, so it has to
+# land first. Splitting the control plane across four charts is what lets the waves
+# express that: one chart would make the ordering invisible.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-base
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://istio-release.storage.googleapis.com/charts
+      chart: base
+      targetRevision: 1.30.3
+      helm:
+        valueFiles:
+          - $values/components/istio/istio-base.yaml
+    - repoURL: https://github.com/gulinux86/platform-gitops
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

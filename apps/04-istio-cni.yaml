@@ -1,0 +1,34 @@
+# istio-cni — wave 4. Required by ambient, not optional.
+#
+# In ambient mode there is no sidecar to intercept traffic, so redirection happens
+# at the node. This DaemonSet configures that; without it, pods join the mesh in
+# name only and their traffic never reaches ztunnel.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-cni
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://istio-release.storage.googleapis.com/charts
+      chart: cni
+      targetRevision: 1.30.3
+      helm:
+        valueFiles:
+          - $values/components/istio/istio-cni.yaml
+    - repoURL: https://github.com/gulinux86/platform-gitops
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

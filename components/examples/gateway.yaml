@@ -1,0 +1,55 @@
+# A Gateway and an HTTPRoute that prove the ingress path end to end.
+#
+# There is no Helm chart for the gateway itself. With Gateway API, creating a
+# Gateway resource is enough: Istio's controller sees the gatewayClassName and
+# provisions the proxy Deployment and Service for it. That is the modern path and
+# the reason the istio/gateway chart is absent from apps/.
+#
+# The Service ends up type LoadBalancer, so the AWS Load Balancer Controller —
+# already installed by the workload layer — creates an NLB in front of it.
+# Internal by default: the private subnets carry kubernetes.io/role/internal-elb
+# and the public ones deliberately do not, so nothing here can accidentally become
+# internet-facing (ARCHITECTURE.md §3 in the terraform repo).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: platform-gateway
+  namespace: istio-ingress
+spec:
+  gatewayClassName: istio
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          # Routes may only attach from namespaces carrying this label. The
+          # alternative — From: All — lets any namespace publish itself through the
+          # shared gateway, which is exactly the accident a platform boundary
+          # exists to prevent.
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-access: "true"
+---
+# Smallest possible proof that the path works: Gateway → HTTPRoute → Service.
+# It routes to a Service that does not exist yet, so the route will report a
+# resolution failure until something backs it. That is deliberate — the point is
+# to confirm the Gateway is programmed and the CRDs are wired, not to run an app.
+# Applications belong in the separate app repository.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: example
+  namespace: istio-ingress
+spec:
+  parentRefs:
+    - name: platform-gateway
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /healthz
+      backendRefs:
+        - name: example-app
+          port: 80

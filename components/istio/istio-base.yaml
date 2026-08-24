@@ -1,0 +1,4 @@
+# CRDs and cluster roles only. Nothing to configure — the file exists so every
+# Istio component follows the same shape, and so there is somewhere obvious to put
+# a setting when one is eventually needed.
+defaultRevision: default

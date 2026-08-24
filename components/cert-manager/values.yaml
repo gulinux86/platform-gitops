@@ -1,0 +1,25 @@
+# cert-manager installs its own CRDs when told to. Left false (the chart default),
+# the controller starts and then fails on every Certificate because the types do
+# not exist — a failure that reads like a bug in cert-manager rather than a missing
+# flag.
+crds:
+  enabled: true
+  keep: true # never cascade-delete Certificates by uninstalling the chart
+
+# Small cluster: the defaults request more than this platform needs.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+
+webhook:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+
+cainjector:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi

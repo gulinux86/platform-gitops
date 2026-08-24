@@ -1,0 +1,34 @@
+# ztunnel — wave 5. The node proxy that replaces sidecars.
+#
+# One DaemonSet pod per node handles mTLS and L4 authorization for every workload
+# on that node. This is the whole economy of ambient: two pods here instead of one
+# extra container in each of the cluster's pods.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ztunnel
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://istio-release.storage.googleapis.com/charts
+      chart: ztunnel
+      targetRevision: 1.30.3
+      helm:
+        valueFiles:
+          - $values/components/istio/ztunnel.yaml
+    - repoURL: https://github.com/gulinux86/platform-gitops
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

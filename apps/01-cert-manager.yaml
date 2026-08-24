@@ -1,0 +1,41 @@
+# cert-manager — wave 1.
+#
+# Not required by Istio ambient itself, which issues its own workload identities.
+# It is here because it is the prerequisite for what comes next: the ADOT operator
+# needs it for webhook certificates, and any real Gateway wants a TLS certificate
+# that is issued and renewed rather than pasted in by hand.
+#
+# Multi-source: the chart comes from the Jetstack repository, the values from this
+# one. `ref: values` names the second source so `$values` can address it — a chart
+# repository holds no files of ours, so the two must be declared separately.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      targetRevision: v1.21.1
+      helm:
+        valueFiles:
+          - $values/components/cert-manager/values.yaml
+    - repoURL: https://github.com/gulinux86/platform-gitops
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # cert-manager's CRDs exceed the annotation size limit that client-side
+      # apply uses to store last-applied state.
+      - ServerSideApply=true

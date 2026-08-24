@@ -1,0 +1,8 @@
+# One per node, handling mTLS and L4 authorization for every workload on it.
+#
+# Resource requests matter more here than for most DaemonSets: ztunnel is on the
+# data path. Starving it does not degrade a feature, it degrades every request.
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi

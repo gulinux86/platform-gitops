@@ -1,0 +1,29 @@
+# The example Gateway and HTTPRoute — wave 6, last.
+#
+# Everything before it is machinery; this is the proof that the machinery works.
+# It needs the Gateway API CRDs (wave 0) and a programmed Istio control plane
+# (wave 3), which is why it comes last rather than first.
+#
+# Delete this Application once real routes exist. It is scaffolding, not platform.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: example-gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/gulinux86/platform-gitops
+    targetRevision: main
+    path: components/examples
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-ingress
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

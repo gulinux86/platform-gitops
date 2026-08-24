@@ -1,0 +1,17 @@
+# ambient is the mode, and it has to be stated here: the chart defaults to sidecar.
+# In ambient there is no injected proxy container — istiod programs ztunnel at the
+# node and waypoints per namespace instead.
+profile: ambient
+
+# The mesh trusts SPIFFE identities derived from the cluster's own OIDC issuer, so
+# no external CA is involved for workload identity.
+meshConfig:
+  # Access logs to stdout. Off by default, and the first thing anyone asks for when
+  # a request does not arrive.
+  accessLogFile: /dev/stdout
+
+pilot:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi

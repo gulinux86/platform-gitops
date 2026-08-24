@@ -1,0 +1,9 @@
+# Must match istiod's mode. In ambient the CNI plugin sets up the node-level
+# redirection that replaces the sidecar's interception.
+profile: ambient
+
+cni:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
