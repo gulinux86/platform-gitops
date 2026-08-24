@@ -12,6 +12,19 @@ metadata:
     argocd.argoproj.io/sync-wave: "3"
 spec:
   project: platform
+  # istiod injects the CA bundle into its own webhooks at runtime. The chart ships
+  # them with the field empty, so Argo CD compares Git against a cluster value that
+  # another controller owns and reports OutOfSync forever — and with selfHeal on,
+  # it reverts the injection and istiod writes it back, indefinitely.
+  #
+  # This declares the field as not ours. Everything else in the webhook stays
+  # reconciled.
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jqPathExpressions:
+        - .webhooks[]?.clientConfig.caBundle
+
   sources:
     - repoURL: https://istio-release.storage.googleapis.com/charts
       chart: istiod
