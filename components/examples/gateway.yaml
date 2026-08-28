@@ -5,11 +5,36 @@
 # provisions the proxy Deployment and Service for it. That is the modern path and
 # the reason the istio/gateway chart is absent from apps/.
 #
-# The Service ends up type LoadBalancer, so the AWS Load Balancer Controller —
-# already installed by the workload layer — creates an NLB in front of it.
-# Internal by default: the private subnets carry kubernetes.io/role/internal-elb
-# and the public ones deliberately do not, so nothing here can accidentally become
-# internet-facing (ARCHITECTURE.md §3 in the terraform repo).
+# The generated Service is ClusterIP, forced by the ConfigMap below. That single
+# word is what keeps this repository from creating AWS resources.
+#
+# Istio defaults it to LoadBalancer, and the AWS Load Balancer Controller answers a
+# LoadBalancer Service with an NLB — one that Terraform never records. Its ENIs
+# then hold the private subnets and the subnets hold the VPC, which is what failed
+# four consecutive `terraform destroy` runs on 2026-08-24. Nobody chose that NLB;
+# it arrived because a default met a controller.
+#
+# The load balancer now lives in Terraform (`workload/modules/platform-ingress` in
+# the eks-terraform repository) and reaches these pods through a
+# TargetGroupBinding. So the edge is still an AWS load balancer — it is simply
+# owned by the layer that can also destroy it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-gateway-options
+  # Must be the Gateway's namespace. Istio's controller ignores a parametersRef
+  # pointing outside it, silently, and the Service reverts to the default.
+  namespace: istio-ingress
+data:
+  # A strategic merge patch over the Service Istio generates. This is the
+  # documented customisation path for Gateway API in Istio 1.30 — deliberately
+  # chosen over the `networking.istio.io/service-type` annotation, which appears in
+  # blog posts but is absent from Istio's own annotation reference and is therefore
+  # not a contract to build a teardown guarantee on.
+  service: |
+    spec:
+      type: ClusterIP
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -17,6 +42,15 @@ metadata:
   namespace: istio-ingress
 spec:
   gatewayClassName: istio
+
+  # Points at the ConfigMap above. `group: ""` is the core API group, which is what
+  # a ConfigMap lives in.
+  infrastructure:
+    parametersRef:
+      group: ""
+      kind: ConfigMap
+      name: platform-gateway-options
+
   listeners:
     - name: http
       protocol: HTTP
