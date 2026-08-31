@@ -12,18 +12,26 @@ metadata:
     argocd.argoproj.io/sync-wave: "3"
 spec:
   project: platform
-  # istiod injects the CA bundle into its own webhooks at runtime. The chart ships
-  # them with the field empty, so Argo CD compares Git against a cluster value that
-  # another controller owns and reports OutOfSync forever — and with selfHeal on,
-  # it reverts the injection and istiod writes it back, indefinitely.
+  # Same two runtime-owned fields as istio-base, on a different object: this chart
+  # ships the revisioned `istio-validator-istio-system`, while base ships
+  # `istiod-default-validator`. One controller writes to both, so both need the
+  # same exemption.
   #
-  # This declares the field as not ours. Everything else in the webhook stays
+  # caBundle: the chart ships the field empty and istiod injects the CA.
+  #
+  # failurePolicy: the chart ships `Ignore` and istiod's webhook controller flips it
+  # to `Fail` once the validation endpoint is ready — permissive while it starts,
+  # fail-closed afterwards. With selfHeal on, Argo CD reverting that reopens a
+  # window in which Istio configuration is validated fail-open on every pass.
+  #
+  # This declares both fields as not ours. Everything else in the webhook stays
   # reconciled.
   ignoreDifferences:
     - group: admissionregistration.k8s.io
       kind: ValidatingWebhookConfiguration
       jqPathExpressions:
         - .webhooks[]?.clientConfig.caBundle
+        - .webhooks[]?.failurePolicy
 
   sources:
     - repoURL: https://istio-release.storage.googleapis.com/charts
