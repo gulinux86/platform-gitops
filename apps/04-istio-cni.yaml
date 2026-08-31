@@ -8,6 +8,14 @@ kind: Application
 metadata:
   name: istio-cni
   namespace: argocd
+  # Cascading delete stops at an Application without this finalizer.
+  #
+  # Only the root carried it, so `kubectl delete applications --all` removed these
+  # as plain objects and orphaned everything they had created — which is how PR #33
+  # in the terraform repo left a Gateway behind, and with it an NLB that blocked the
+  # VPC. With the finalizer, deleting the root actually deletes what each child owns.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "4"
 spec:
