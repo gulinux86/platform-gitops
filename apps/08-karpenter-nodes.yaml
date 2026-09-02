@@ -1,0 +1,42 @@
+# The EC2NodeClass and NodePool — wave 8, after the controller.
+#
+# Split from wave 7 for the reason every wave in this repository exists: these are
+# instances of CRDs the Karpenter chart installs. Applied together, the instance
+# usually loses the race.
+#
+# Splitting them also separates two kinds of change. Bumping the controller touches
+# wave 7; changing what a node may be — instance families, capacity type, limits —
+# touches only this one, and reads as its own diff.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter-nodes
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/gulinux86/platform-gitops
+    targetRevision: main
+    path: components/karpenter
+    directory:
+      recurse: false
+      # values.yaml belongs to the controller's Helm release in wave 7. Applied
+      # here as a manifest it would be a document with no kind, and the sync fails.
+      exclude: "values.yaml"
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Cluster-scoped resources, both of them. The namespace only decides where Argo
+    # CD records them.
+    namespace: kube-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
