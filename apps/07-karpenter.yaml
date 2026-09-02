@@ -1,0 +1,55 @@
+# Karpenter — wave 7. Capacity stops being a number in a tfvars file.
+#
+# The AWS half of this has been applied since PR #27 in eks-terraform and has done
+# nothing since: an IAM role bound by Pod Identity, an SQS interruption queue fed by
+# EventBridge, a node role with an EC2_LINUX access entry, and karpenter.sh/discovery
+# tags on the private subnets and the cluster security group. This Application is the
+# controller those pieces were waiting for.
+#
+# The chart is an OCI artifact, which Argo CD treats as a source like any other — so
+# the registry has to appear in the platform AppProject's sourceRepos, in Terraform.
+# Omitting it fails with "repo is not permitted", the same way the Istio and
+# cert-manager chart repositories did before PR #31.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+spec:
+  project: platform
+  sources:
+    # OCI charts are addressed differently from the HTTP chart repositories used by
+    # the Istio and cert-manager Applications: the scheme is explicit, the chart
+    # name is part of the URL rather than a separate `chart:` field, and `path`
+    # must be ".". This exact string is what the AppProject's sourceRepos entry has
+    # to match.
+    - repoURL: oci://public.ecr.aws/karpenter/karpenter
+      path: .
+      targetRevision: 1.13.0
+      helm:
+        valueFiles:
+          - $values/components/karpenter/values.yaml
+    - repoURL: https://github.com/gulinux86/platform-gitops
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Must match the Pod Identity association in foundation/modules/karpenter.
+    # The controller runs beside the other cluster components rather than in a
+    # namespace of its own, which is where the v1 charts default.
+    namespace: kube-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Karpenter's CRDs exceed the annotation size limit client-side apply uses to
+      # store last-applied state — the same reason cert-manager and the Gateway API
+      # CRDs need this.
+      - ServerSideApply=true

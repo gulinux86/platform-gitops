@@ -1,0 +1,52 @@
+# What a Karpenter node is made of.
+#
+# Everything here is a name or a tag, never an ARN or an id — the same rule the
+# controller's values follow, and for the same reason: this repository is public and
+# these values would otherwise pin it to one AWS account.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  # By NAME, not ARN. The foundation layer creates this role and publishes its name
+  # as an output for exactly this field; Karpenter v1 manages the instance profile
+  # around it itself.
+  #
+  # The role also carries an EKS Access Entry of type EC2_LINUX. Without that the
+  # instances boot, look healthy in EC2, and never register as Kubernetes nodes —
+  # which is why the Terraform module calls it "THE STEP THAT IS EASY TO MISS".
+  role: eks-hml-karpenter-node
+
+  # Selected by the tag Terraform already applies: on the private subnets in the
+  # network module, and on the EKS-managed cluster security group, which Terraform
+  # does not create and therefore tags after the fact.
+  #
+  # Private only. Nothing places a node where an instance could take a public
+  # address — the same posture the ingress ALB keeps.
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-hml-cluster
+
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-hml-cluster
+
+  # `@latest` picks up AMI patches without anyone doing anything, and gives two
+  # syncs months apart different nodes with no diff in Git — the exact property this
+  # repository's version pinning exists to prevent, accepted here and nowhere else.
+  #
+  # The trade is deliberate: hml is rebuilt from scratch between sessions, so a
+  # pinned AMI would go stale unnoticed and there is no patching pipeline to catch
+  # it. Production should pin (`al2023@v2026xxxx`) and bump on a schedule, which
+  # turns "silently current" into "explicitly reviewed".
+  amiSelectorTerms:
+    - alias: al2023@latest
+
+  # Tagged so the teardown can find these instances by tag rather than by guessing
+  # which ones Karpenter made, and so the controller's own IAM policy — which
+  # conditions ec2:TerminateInstances on this tag — continues to apply to them.
+  tags:
+    karpenter.sh/discovery: eks-hml-cluster
+    Project: eks
+    Environment: hml
+    ManagedBy: karpenter

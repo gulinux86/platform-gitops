@@ -1,0 +1,54 @@
+# Karpenter controller values.
+#
+# Two names and nothing else. Notably absent: the controller's IAM role ARN.
+#
+# The foundation layer binds that role to this namespace/ServiceAccount pair with
+# an EKS Pod Identity association, so the credentials arrive from the AWS side and
+# the Kubernetes object needs no annotation. With IRSA the ARN would have to be
+# written here — an account-specific identifier in a public repository, per account.
+# That is why `foundation/modules/karpenter/controller.tf` chose Pod Identity, and
+# this file is the first time that decision is exercised.
+#
+# The two values below are names, not ARNs: portable, and meaningless to anyone who
+# reads them without the account.
+
+settings:
+  clusterName: eks-hml-cluster
+
+  # The queue EventBridge feeds with Spot reclaim, rebalance, state-change and
+  # health events. Karpenter runs without it — which is the trap: the gap only
+  # shows during an interruption, when the node vanishes instead of draining.
+  interruptionQueue: eks-hml-karpenter-interruption
+
+# The ServiceAccount name must match the Pod Identity association exactly. A
+# mismatch is not an error anywhere: the controller starts, gets no credentials,
+# and says so only in its own logs.
+serviceAccount:
+  name: karpenter
+
+# Karpenter runs on the managed node group, never on a node it provisioned itself.
+# It cannot host itself, and it must not be evicted by its own consolidation
+# decision while making one.
+#
+# The system pool carries no taint today, so this is an affinity expressed by what
+# it excludes rather than by a label the pool asserts. Revisit if the pool is ever
+# tainted (a NodePool label would be the cleaner selector then).
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: karpenter.sh/nodepool
+              operator: DoesNotExist
+
+# Two replicas across the two system nodes. The controller is a leader-elected
+# singleton, so this buys failover, not throughput.
+replicas: 2
+
+controller:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi

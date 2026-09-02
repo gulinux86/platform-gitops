@@ -1,0 +1,91 @@
+# What Karpenter is allowed to provision, and how much of it.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+
+      # Node lifetime. Rotation is how an AMI patch reaches a running cluster when
+      # there is no patching pipeline, so this is a security control, not tidiness.
+      #
+      # 24h is deliberately short and specific to hml. Production values are 7-30
+      # days; here the environment is destroyed between sessions, so a 30-day timer
+      # would never fire and the disruption path would never run. A short one
+      # exercises it while somebody is watching.
+      expireAfter: 24h
+
+      requirements:
+        # Breadth, not precision — the opposite instinct to an Auto Scaling group,
+        # where the instance type is the decision.
+        #
+        # AWS states it plainly: "The more instance types you allow Karpenter to
+        # utilize, the better EC2 can optimize your spot instance's runtime."
+        # Over-constraining risks having no capacity to draw from, most sharply on
+        # Spot, where a narrow list is a narrow pool to be reclaimed from. An
+        # explicit list also goes stale as generations ship, and nothing says so.
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["c", "m", "r"]
+
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["4"]
+
+        # Two vCPU minimum. Below that the VPC CNI's ENI-derived pod ceiling gets
+        # low enough that a node costs more in overhead pods than it contributes.
+        - key: karpenter.k8s.aws/instance-cpu
+          operator: Gt
+          values: ["1"]
+
+        # Spot first, on-demand when there is none. Karpenter prefers Spot and falls
+        # back on its own, using price-capacity-optimized allocation.
+        #
+        # Beyond cost, this is what exercises the SQS interruption queue the
+        # foundation layer has carried unused since PR #27. Its own comment names
+        # the trap: a missing queue only shows during an interruption, when it is
+        # too late. Production would split this into two NodePools with weights,
+        # keeping stateful and latency-sensitive work on-demand.
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot", "on-demand"]
+
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+
+  disruption:
+    # Removes nodes that are empty, and repacks ones that are underused. This is
+    # what makes Karpenter more than a faster autoscaler.
+    #
+    # It imposes a constraint on workloads rather than on this file: consolidation
+    # packs by *requests*, so a pod that bursts above its memory request can be
+    # placed on a node that cannot hold it. AWS's guidance is to set
+    # requests=limits for all non-CPU resources. That belongs in the application
+    # repository's conventions; noted here because this setting is what makes it
+    # matter.
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m
+
+    budgets:
+      # At most one node disrupted at a time. With two system nodes and a handful
+      # of Karpenter nodes, a percentage would round to something surprising.
+      - nodes: "1"
+
+  # The only ceiling that exists.
+  #
+  # Karpenter enforces no cluster-wide limit — "It is not possible to set a global
+  # limit for the whole cluster. Limits apply to specific NodePools" — so this is
+  # the direct analogue of an ASG's maximum size, and its absence is the shortest
+  # path from a bad `replicas` value to a bill.
+  #
+  # Small on purpose. This number is meant to be hit during testing, not to
+  # accommodate growth; raising it should be a decision, not a reflex.
+  limits:
+    cpu: "20"
+    memory: 80Gi
