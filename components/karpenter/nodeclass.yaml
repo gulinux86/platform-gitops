@@ -42,11 +42,21 @@ spec:
   amiSelectorTerms:
     - alias: al2023@latest
 
-  # Tagged so the teardown can find these instances by tag rather than by guessing
-  # which ones Karpenter made, and so the controller's own IAM policy — which
-  # conditions ec2:TerminateInstances on this tag — continues to apply to them.
+  # Tags for cost attribution. Nothing depends on them for correctness.
+  #
+  # `karpenter.sh/discovery` was here and never reached a single instance: Karpenter
+  # reserves the `karpenter.sh/` prefix and drops such keys from this list silently
+  # — no error, no warning, no event. The tags above in the selectors are a different
+  # thing entirely: those match a tag Terraform put on the subnets and security
+  # groups, and they work.
+  #
+  # It mattered because two things had been written against a tag that could not
+  # exist: the controller's IAM policy conditioned ec2:TerminateInstances on it, so
+  # the controller could not terminate its own nodes; and the teardown polled for
+  # instances carrying it, so the drain reported success while nodes were still
+  # running. Both now use what Karpenter actually writes —
+  # `karpenter.sh/nodepool` and `kubernetes.io/cluster/<name>=owned`.
   tags:
-    karpenter.sh/discovery: eks-hml-cluster
     Project: eks
     Environment: hml
     ManagedBy: karpenter
