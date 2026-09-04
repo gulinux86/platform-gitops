@@ -21,27 +21,37 @@ spec:
       expireAfter: 24h
 
       requirements:
-        # Breadth, not precision — the opposite instinct to an Auto Scaling group,
-        # where the instance type is the decision.
+        # An explicit list, which is the opposite of the general advice — and the
+        # advice loses to an account-level constraint.
         #
-        # AWS states it plainly: "The more instance types you allow Karpenter to
-        # utilize, the better EC2 can optimize your spot instance's runtime."
-        # Over-constraining risks having no capacity to draw from, most sharply on
-        # Spot, where a narrow list is a narrow pool to be reclaimed from. An
-        # explicit list also goes stale as generations ship, and nothing says so.
-        - key: karpenter.k8s.aws/instance-category
+        # AWS recommends breadth: "The more instance types you allow Karpenter to
+        # utilize, the better EC2 can optimize your spot instance's runtime." This
+        # account is on the **AWS Free Plan**, where anything not free-tier eligible
+        # is refused outright. Expressed as categories, Karpenter picks from
+        # hundreds of types, almost none of them eligible, and EC2 rejects the whole
+        # CreateFleet with:
+        #
+        #   InvalidParameterCombination: The specified instance type is not eligible
+        #   for Free Tier
+        #
+        # Observed, not anticipated — the NodeClaim retried for minutes and no
+        # instance was ever created.
+        #
+        # The eligible set in us-east-1 is small:
+        #   c7i-flex.large  2 vCPU   4 GB
+        #   m7i-flex.large  2 vCPU   8 GB
+        #   t3.small        2 vCPU   2 GB   — tight once five DaemonSets land
+        #   t3.micro        2 vCPU   1 GB   — not viable
+        #   t4g.micro/small                 — arm64, excluded below
+        #
+        # Only the two flex types are listed. They are also what the managed node
+        # group runs, for the same reason (foundation `instance_types`).
+        #
+        # This is the line to widen the day the account leaves the Free Plan: delete
+        # it and restore the category/generation form above it in git history.
+        - key: node.kubernetes.io/instance-type
           operator: In
-          values: ["c", "m", "r"]
-
-        - key: karpenter.k8s.aws/instance-generation
-          operator: Gt
-          values: ["4"]
-
-        # Two vCPU minimum. Below that the VPC CNI's ENI-derived pod ceiling gets
-        # low enough that a node costs more in overhead pods than it contributes.
-        - key: karpenter.k8s.aws/instance-cpu
-          operator: Gt
-          values: ["1"]
+          values: ["c7i-flex.large", "m7i-flex.large"]
 
         # Spot first, on-demand when there is none. Karpenter prefers Spot and falls
         # back on its own, using price-capacity-optimized allocation.
