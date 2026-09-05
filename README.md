@@ -63,6 +63,8 @@ annotation makes the order explicit:
 | 4 | istio-cni | Node redirection — ambient has no sidecar to intercept |
 | 5 | ztunnel | The per-node proxy that replaces sidecars |
 | 6 | example Gateway | Proves the path end to end; delete once real routes exist |
+| 7 | Karpenter | Provisions nodes for pods that do not fit |
+| 8 | EC2NodeClass + NodePool | Instances of wave 7's CRDs, so they follow it |
 
 ## Where the traffic comes from
 
@@ -106,6 +108,34 @@ The ConfigMap must live in the `Gateway`'s namespace. Istio ignores a
 `parametersRef` pointing outside it *silently*, and the Service reverts to
 `LoadBalancer`.
 
+## Capacity
+
+Nodes arrive when pods need them. A `NodePool` says what may be provisioned and how
+much; an `EC2NodeClass` says what a node is made of. Both reference AWS by name or
+by tag — never by ARN — for the same reason the controller uses Pod Identity: this
+repository is public.
+
+Three things about that pair are worth knowing before changing them.
+
+**The instance list is explicit, and that is not the general advice.** AWS
+recommends breadth: the more types Karpenter may use, the better EC2 optimises, and
+the wider the pool Spot draws from. This account is on the **AWS Free Plan**, where
+anything not free-tier eligible is refused outright — expressed as categories, the
+whole `CreateFleet` fails with `InvalidParameterCombination`. Two types survive that
+filter with enough memory to be useful. Delete the list and restore categories the
+day the account leaves the Free Plan.
+
+**`karpenter.sh/` is a reserved tag prefix.** Keys under it are dropped from
+`spec.tags` silently — no error, no warning, no event, while a custom tag beside
+them applies normally. The selectors above use `karpenter.sh/discovery` and are
+correct: those match a tag Terraform put on the *subnets and security groups*, which
+is a different thing from tagging an instance.
+
+**Consolidation constrains workloads, not just nodes.** Karpenter packs by
+*requests*, so a pod that bursts above its memory request can land on a node that
+cannot hold it. Set `requests` equal to `limits` for non-CPU resources on anything
+that runs here.
+
 ## Why ambient, not sidecars
 
 Ambient moves mTLS and L4 authorization to one `ztunnel` pod per node, instead of
@@ -127,6 +157,13 @@ so two syncs months apart give different clusters with no diff in Git.
 | Gateway API | `v1.6.1` (standard channel) |
 | cert-manager | `v1.21.1` |
 | Istio | `1.30.3` |
+| Karpenter | `1.13.0` (OCI chart) |
+
+The one exception is the node AMI: `al2023@latest` in the `EC2NodeClass`. Patches
+then arrive unattended, at the cost of two syncs months apart producing different
+nodes with no diff here — the property this table exists to prevent, accepted
+because hml is rebuilt from scratch and has no patching pipeline. Production should
+pin the alias.
 
 ## Adding a component
 
@@ -140,10 +177,11 @@ Phase 1 is what is here, and it is **proven**: traffic reaches the demo backend
 through the ALB, the gateway and the ambient mesh, and the platform tears down
 cleanly with all of it running — which it did not, for a while.
 
-Next is Karpenter, then observability (kube-prometheus-stack and Kiali), then
-External Secrets and Argo Rollouts once there are applications to serve. One phase
-proven before the next, so a failure has one plausible cause instead of five.
+Phase 2 is Karpenter, and it is proven too: a pod that does not fit gets a node in
+about eleven seconds, an idle node is consolidated away, and the platform still
+tears down cleanly with Karpenter nodes running — the teardown asks Karpenter to
+drain them while its controller is still alive.
 
-Karpenter is where rule 2 gets its next test. Its nodes are EC2 instances outside
-Terraform state and their network interfaces hold subnets — the same shape of
-problem the ingress path had, arriving from a different direction.
+Next is observability (kube-prometheus-stack and Kiali), then External Secrets and
+Argo Rollouts once there are applications to serve. One phase proven before the
+next, so a failure has one plausible cause instead of five.
