@@ -1,9 +1,13 @@
 # cert-manager — wave 1.
 #
 # Not required by Istio ambient itself, which issues its own workload identities.
-# It is here because it is the prerequisite for what comes next: the ADOT operator
-# needs it for webhook certificates, and any real Gateway wants a TLS certificate
-# that is issued and renewed rather than pasted in by hand.
+# It is here for TLS that is issued and renewed rather than pasted in by hand — what
+# any real Gateway wants, and what the external ingress path will need.
+#
+# This comment used to name the ADOT operator as the reason. That was one of two
+# directions the repository carried at once; observability went to an in-cluster
+# Prometheus instead (wave 9), so the operator is not coming. A comment that promises
+# something the platform will not do is worse than no comment.
 #
 # Multi-source: the chart comes from the Jetstack repository, the values from this
 # one. `ref: values` names the second source so `$values` can address it — a chart
