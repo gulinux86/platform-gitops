@@ -1,0 +1,45 @@
+# Kiali — the reason the metrics stack is in-cluster rather than managed.
+#
+# It reads Istio telemetry from Prometheus to draw the mesh: which workloads talk to
+# which, over mTLS or not, and where a request stopped. Ambient has no sidecar to
+# inspect, so without this the mesh is evidenced only by requests succeeding.
+
+auth:
+  # No login. The only way in is a port-forward from a machine that already has
+  # cluster credentials, so a second credential in front of it protects nothing and
+  # is one more thing nobody rotates.
+  #
+  # This is exactly the assumption to revisit if Kiali is ever exposed.
+  strategy: anonymous
+
+deployment:
+  view_only_mode: true          # it reads the mesh; changes to it come from Git
+  ingress:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+external_services:
+  prometheus:
+    # In-cluster, installed by wave 9. Kiali queries this at startup and reports its
+    # absence as a configuration error rather than waiting — which is why it is a
+    # wave behind rather than beside it.
+    url: http://kube-prometheus-stack-prometheus.observability:9090
+
+  grafana:
+    enabled: true
+    internal_url: http://kube-prometheus-stack-grafana.observability
+    # Not set: Kiali would render links to a Grafana that is only reachable through a
+    # port-forward, and a link that does not work is worse than no link.
+    external_url: ""
+
+  tracing:
+    # No tracing backend. Ambient gives L4 telemetry; spans need application
+    # instrumentation, and there are no applications yet.
+    enabled: false
+
+istio_namespace: istio-system

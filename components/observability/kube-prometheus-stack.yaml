@@ -1,0 +1,168 @@
+# Prometheus, Grafana and the exporters — sized for this cluster, not for the one the
+# chart's defaults assume.
+#
+# Three of the choices below remove things rather than configure them. That is the
+# point: a chart that ships everything is not a reason to install everything.
+
+# ── Alertmanager: deliberately absent ─────────────────────────────────────────────
+#
+# It has no destination. There is no Slack workspace, no PagerDuty, no mail relay and
+# no on-call rotation to route to.
+#
+# Installing it unconfigured is worse than leaving it out, because it makes alerting
+# *look* present: someone reading this cluster would reasonably assume a failure
+# reaches a human, and none would. Same reasoning that made a permanently-Degraded
+# Application worth fixing rather than tolerating.
+alertmanager:
+  enabled: false
+
+# ── Default rules: trimmed to what this platform can act on ───────────────────────
+#
+# The chart ships a few hundred rules written for clusters this is not — etcd
+# membership, kube-scheduler and kube-controller-manager health, and other things EKS
+# manages and does not expose. They fire, nobody can act, and unactioned alerts train
+# people to ignore alerts.
+defaultRules:
+  create: true
+  rules:
+    etcd: false
+    kubeSchedulerAlerting: false
+    kubeControllerManager: false
+    kubeProxy: false
+    kubernetesSystem: true
+    kubernetesResources: true
+    node: true
+    general: true
+
+# Not exposed by EKS — scraping them produces permanently-down targets, which is the
+# same "red mark nobody can act on" in a different place.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    # ── Retention: hours, not the chart's 15 days ─────────────────────────────────
+    #
+    # This environment is destroyed between sessions and its StorageClass reclaims on
+    # delete, so a 15-day retention is a promise the platform cannot keep — and it is
+    # most of what makes Prometheus heavy. Sizing follows retention: the question
+    # becomes "how much is in flight" rather than "how much history".
+    #
+    # Same shape as the NodePool's expireAfter: a value that differs from production
+    # for a stated reason rather than by neglect.
+    retention: 12h
+    retentionSize: 4GB
+
+    # Ephemeral on purpose. A PVC here would be reclaimed on destroy anyway (the
+    # StorageClass is Delete in hml), so it would add a volume to every teardown and
+    # buy nothing. Production keeps its series in Amazon Managed Prometheus instead —
+    # see ARCHITECTURE.md §12.
+    storageSpec: {}
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 1Gi
+      limits:
+        memory: 2Gi
+
+    # Scrape what this platform runs. Without these two, Kiali renders an empty
+    # topology and it looks like a mesh problem rather than a configuration one.
+    additionalScrapeConfigs:
+      - job_name: istiod
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [istio-system]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: istiod;http-monitoring
+
+      - job_name: ztunnel
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [istio-system]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: ztunnel
+          - source_labels: [__address__]
+            action: replace
+            regex: ([^:]+)(?::\d+)?
+            replacement: $1:15020
+            target_label: __address__
+
+      # Karpenter's own decisions — why a node appeared, why one was consolidated.
+      # The controller logs what it did; these say how often and under what pressure.
+      - job_name: karpenter
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [kube-system]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            action: keep
+            regex: karpenter
+          - source_labels: [__address__]
+            action: replace
+            regex: ([^:]+)(?::\d+)?
+            replacement: $1:8080
+            target_label: __address__
+
+    # The mesh must not intercept scraping. Prometheus reaching a pod's metrics port
+    # through ztunnel would make every target's identity the proxy's rather than the
+    # workload's.
+    podMetadata:
+      annotations:
+        ambient.istio.io/bypass-inbound-capture: "true"
+
+grafana:
+  # Port-forward, like Argo CD. Exposing it would make it the first thing this
+  # platform serves that is not a demo backend, and that is a decision rather than a
+  # default (see the change's open questions).
+  service:
+    type: ClusterIP
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  # Chart-generated, like Argo CD's. One more bootstrap credential nobody rotates —
+  # acceptable in an environment destroyed between sessions, named so it is not a
+  # surprise.
+  defaultDashboardsTimezone: browser
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 64Mi

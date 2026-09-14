@@ -1,0 +1,45 @@
+# Metrics — wave 9. The platform starts reporting on itself.
+#
+# Everything before this is machinery that can only be observed by whether requests
+# succeed. This is what makes node pressure, pod restarts, mesh traffic and
+# Karpenter's decisions visible after the fact rather than inferred.
+#
+# Sized to fit the system node group rather than assumed into it — see the values
+# file. If Karpenter provisions a node for it, that is a measurement worth recording,
+# not a failure.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 90.0.0
+      helm:
+        valueFiles:
+          - $values/components/observability/kube-prometheus-stack.yaml
+    - repoURL: https://github.com/gulinux86/platform-gitops
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The Prometheus operator's CRDs exceed the annotation size limit client-side
+      # apply uses to store last-applied state — the same reason cert-manager and the
+      # Gateway API CRDs need this.
+      - ServerSideApply=true

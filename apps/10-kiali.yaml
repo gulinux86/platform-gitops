@@ -1,0 +1,42 @@
+# Kiali — wave 10. The mesh becomes visible.
+#
+# A wave behind the metrics stack because it queries Prometheus at startup and treats
+# its absence as a configuration error rather than waiting for it. Same ordering
+# problem every wave in this repository exists to express.
+#
+# This is the component the whole phase is for: ambient has no sidecar to inspect, so
+# without a topology view the mesh is the least observable part of the platform while
+# being the most interesting.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kiali
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://kiali.org/helm-charts
+      chart: kiali-server
+      targetRevision: 2.31.0
+      helm:
+        valueFiles:
+          - $values/components/observability/kiali.yaml
+    - repoURL: https://github.com/gulinux86/platform-gitops
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
