@@ -100,6 +100,38 @@ prometheus:
             replacement: $1:15020
             target_label: __address__
 
+      # The gateway's Envoy — and the only source of L7 request metrics here.
+      #
+      # ztunnel reports L4: connections and bytes (`istio_tcp_*`). It is not a
+      # proxy in the HTTP sense, so it cannot report per-request status codes, and
+      # `istio_requests_total` — the metric Kiali draws its graph from — did not
+      # exist at all with only istiod and ztunnel scraped. Ambient has no sidecar to
+      # fill that gap; the gateway pod is where requests are actually parsed.
+      #
+      # This covers traffic entering through the gateway. Pod-to-pod L7 metrics would
+      # need a waypoint proxy per namespace, which is the trade the platform-gitops
+      # README describes for ambient and a separate decision.
+      - job_name: istio-gateway
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [istio-ingress]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_gateway_networking_k8s_io_gateway_name]
+            action: keep
+            regex: .+
+          - source_labels: [__address__]
+            action: replace
+            regex: ([^:]+)(?::\d+)?
+            replacement: $1:15020
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+
       # Karpenter's own decisions — why a node appeared, why one was consolidated.
       # The controller logs what it did; these say how often and under what pressure.
       - job_name: karpenter
@@ -125,6 +157,24 @@ prometheus:
         ambient.istio.io/bypass-inbound-capture: "true"
 
 grafana:
+  # Pinned off the chart's default image, which does not work.
+  #
+  # Chart 90.0.0 points at `grafana:13.2.1-distroless`, and that variant ships
+  # without the core datasource plugins. The provisioned Prometheus datasource then
+  # has no driver behind it: the URL is right, the Service is reachable, and every
+  # query returns nothing while the log says
+  #
+  #   Could not find plugin definition for data source  datasource_type=prometheus
+  #
+  # Verified by listing the plugin directory in both images — 12.1.1 carries twenty
+  # datasource plugins including prometheus, 13.2.1-distroless carries five and does
+  # not. Nothing in this file caused it; it is the chart's own default.
+  #
+  # Pinned rather than chart-downgraded so the rest of 90.0.0 is kept. Revisit when
+  # the chart moves to a 13.x image that is not distroless.
+  image:
+    tag: 12.1.1
+
   # Port-forward, like Argo CD. Exposing it would make it the first thing this
   # platform serves that is not a demo backend, and that is a decision rather than a
   # default (see the change's open questions).
