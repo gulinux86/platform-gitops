@@ -65,6 +65,8 @@ annotation makes the order explicit:
 | 6 | example Gateway | Proves the path end to end; delete once real routes exist |
 | 7 | Karpenter | Provisions nodes for pods that do not fit |
 | 8 | EC2NodeClass + NodePool | Instances of wave 7's CRDs, so they follow it |
+| 9 | kube-prometheus-stack | The platform starts reporting on itself |
+| 10 | Kiali | Reads Prometheus, so it follows it |
 
 ## Where the traffic comes from
 
@@ -136,6 +138,47 @@ is a different thing from tagging an instance.
 cannot hold it. Set `requests` equal to `limits` for non-CPU resources on anything
 that runs here.
 
+## Observability
+
+Prometheus, Grafana and Kiali, in the cluster rather than in AWS. The reason is Kiali:
+it reads Istio telemetry from Prometheus, and the mesh is the specific thing that was
+invisible — ambient has no sidecar to inspect, so until this existed the mesh was
+evidenced only by requests succeeding.
+
+**Three things the chart ships are deliberately not installed.** Alertmanager has no
+destination here — no Slack, no PagerDuty, no on-call — and unconfigured it would make
+alerting look present when a failure would reach nobody. The etcd, scheduler,
+controller-manager and kube-proxy rules go with it, along with their scrape targets:
+EKS manages those and does not expose them, so they would be permanently-down targets
+firing alerts nobody can act on.
+
+**Retention is hours and there is no volume.** This environment is destroyed between
+sessions, so metrics do not survive a teardown. That is also most of what makes
+Prometheus light enough to fit beside everything else on two nodes.
+
+### L7 metrics come from the gateway
+
+This is the ambient detail that matters for anything added here:
+
+```
+ztunnel   L4   istio_tcp_* — connections, bytes.  No status codes.
+gateway   L7   istio_requests_total — what Kiali draws its graph from
+waypoint  L7   the same, for pod-to-pod traffic — not deployed
+```
+
+With only istiod and ztunnel scraped, `istio_requests_total` did not exist and Kiali
+had nothing to draw. The gateway pod is scraped on `:15020` for that reason.
+
+Pod-to-pod request detail needs a waypoint per namespace — the L7 cost described
+below. Without one, Kiali shows TCP connections between workloads rather than
+requests.
+
+### Kiali needs traffic
+
+Its graph comes from counters that only move while requests flow. A quiet cluster
+renders an empty topology, which looks like a mesh problem and is not one. Generate
+traffic through the gateway before opening it.
+
 ## Why ambient, not sidecars
 
 Ambient moves mTLS and L4 authorization to one `ztunnel` pod per node, instead of
@@ -158,8 +201,16 @@ so two syncs months apart give different clusters with no diff in Git.
 | cert-manager | `v1.21.1` |
 | Istio | `1.30.3` |
 | Karpenter | `1.13.0` (OCI chart) |
+| kube-prometheus-stack | `90.0.0`, with Grafana pinned to `12.1.1` |
+| Kiali | `2.31.0` |
 
-The one exception is the node AMI: `al2023@latest` in the `EC2NodeClass`. Patches
+Grafana is pinned **off** the chart's default, which is the opposite problem. Chart
+90.0.0 points at `grafana:13.2.1-distroless`, and that variant ships without the core
+datasource plugins — the provisioned Prometheus datasource then has the right URL, a
+reachable Service, and no driver behind it, so every query silently returns nothing.
+Unpin when the chart moves to a 13.x image that is not distroless.
+
+The one exception to pinning is the node AMI: `al2023@latest` in the `EC2NodeClass`. Patches
 then arrive unattended, at the cost of two syncs months apart producing different
 nodes with no diff here — the property this table exists to prevent, accepted
 because hml is rebuilt from scratch and has no patching pipeline. Production should
@@ -182,6 +233,7 @@ about eleven seconds, an idle node is consolidated away, and the platform still
 tears down cleanly with Karpenter nodes running — the teardown asks Karpenter to
 drain them while its controller is still alive.
 
-Next is observability (kube-prometheus-stack and Kiali), then External Secrets and
-Argo Rollouts once there are applications to serve. One phase proven before the
-next, so a failure has one plausible cause instead of five.
+Phase 3 is observability, and it is here: the platform reports on itself and the mesh
+is visible. Next are External Secrets and Argo Rollouts, once there are applications
+to serve. One phase proven before the next, so a failure has one plausible cause
+instead of five.
