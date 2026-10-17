@@ -44,8 +44,9 @@ spec:
         #   t3.micro        2 vCPU   1 GB   — not viable
         #   t4g.micro/small                 — arm64, excluded below
         #
-        # Only the two flex types are listed. They are also what the managed node
-        # group runs, for the same reason (foundation `instance_types`).
+        # Only the two flex types are listed. The managed node group is held to the
+        # same eligible set for the same reason, and currently runs only
+        # m7i-flex.large (foundation `instance_types`).
         #
         # This is the line to widen the day the account leaves the Free Plan: delete
         # it and restore the category/generation form above it in git history.
