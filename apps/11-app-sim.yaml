@@ -1,0 +1,46 @@
+# The disruption-test application, admitted to the cluster.
+#
+# The manifests live in app-gitops; this file is the platform's half of the
+# handover, and it holds what the application repository is not allowed to decide:
+#
+#   - the Namespace — the `apps` AppProject denies cluster-scoped resources, so an
+#     application cannot create its own;
+#   - its labels — joining the ambient mesh and attaching routes to the shared
+#     gateway are both granted here, not requested there;
+#   - the Application itself, under the `apps` project, so everything it syncs is
+#     held to app-* namespaces and namespaced kinds.
+#
+# Wave 11: after Karpenter's NodePool (8), because the pods only schedule on
+# Karpenter nodes, and after the gateway (6) the route attaches to.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-sim
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+  labels:
+    istio.io/dataplane-mode: ambient
+    gateway-access: "true"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-sim
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  project: apps
+  source:
+    repoURL: https://github.com/gulinux86/app-gitops
+    targetRevision: main
+    path: apps/sim
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app-sim
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
