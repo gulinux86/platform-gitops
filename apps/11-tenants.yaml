@@ -1,0 +1,38 @@
+# Application onboarding, kept apart from the platform's own components.
+#
+# apps/ holds what extends the cluster; tenants/ holds one file per application —
+# its Namespace (with the mesh and gateway labels) and its Application under the
+# `apps` project. Same root, same review, but a change to an application's admission
+# never sits in the same directory as a change to Istio or Karpenter.
+#
+# The Application objects stay in this repository, not in app-gitops, on purpose.
+# An Application chooses its own project, so a repository that can write them can
+# write one with `project: platform` and reach the whole cluster. The `apps` project
+# cannot write to the argocd namespace, and that is what keeps the boundary.
+#
+# Under the `platform` project because it creates Namespaces and Applications.
+# Wave 11: application pods need the NodePool (8) and the gateway (6).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tenants
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/gulinux86/platform-gitops
+    targetRevision: main
+    path: tenants
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
