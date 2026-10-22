@@ -33,7 +33,7 @@ anyone who can commit to it.
 |---|---|---|
 | Source | this repository | the application repository |
 | Cluster-scoped resources (CRDs, ClusterRole, Namespace) | allowed | **denied** |
-| Destination namespaces | any | a fixed list |
+| Destination namespaces | any | the `app-*` prefix |
 
 So a manifest in the application repository cannot install a CRD, grant itself a
 ClusterRoleBinding, or escape its namespace. Argo CD refuses before applying.
@@ -67,6 +67,7 @@ annotation makes the order explicit:
 | 8 | EC2NodeClass + NodePool | Instances of wave 7's CRDs, so they follow it |
 | 9 | kube-prometheus-stack | The platform starts reporting on itself |
 | 10 | Kiali | Reads Prometheus, so it follows it |
+| 11 | `app-sim` Namespace + Application | Application (apps project, `app-gitops`); its pods need wave 8's NodePool and wave 6's gateway |
 
 ## Where the traffic comes from
 
