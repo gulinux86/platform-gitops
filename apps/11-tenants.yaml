@@ -26,9 +26,11 @@ spec:
   source:
     repoURL: https://github.com/gulinux86/platform-gitops
     targetRevision: main
+    # No `directory: {recurse: false}`, though it is the intent: holding only a zero
+    # value, the block is dropped from the live object, and root then reports this
+    # Application OutOfSync forever — which eks-upgrade's live check refuses to
+    # start on. Non-recursive is the default.
     path: tenants
-    directory:
-      recurse: false
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
