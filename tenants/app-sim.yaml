@@ -10,14 +10,12 @@
 #   - the Application itself, under the `apps` project, so everything it syncs is
 #     held to app-* namespaces and namespaced kinds.
 #
-# Wave 11: after Karpenter's NodePool (8), because the pods only schedule on
-# Karpenter nodes, and after the gateway (6) the route attaches to.
+# Synced by the `tenants` Application (apps/11-tenants.yaml), which already runs
+# after the NodePool and the gateway this application's pods and route need.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: app-sim
-  annotations:
-    argocd.argoproj.io/sync-wave: "11"
   labels:
     istio.io/dataplane-mode: ambient
     gateway-access: "true"
@@ -29,8 +27,6 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
-  annotations:
-    argocd.argoproj.io/sync-wave: "11"
 spec:
   project: apps
   source:

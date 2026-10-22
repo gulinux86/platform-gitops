@@ -43,10 +43,18 @@ ClusterRoleBinding, or escape its namespace. Argo CD refuses before applying.
 ```
 apps/          one Application per component — the "where and in what order"
 components/    chart values and manifests    — the "what"
+tenants/       one file per application: its Namespace and its Application
 ```
 
 Separating them means changing a chart version touches one file and never the
 orchestration.
+
+`tenants/` is how an application from
+[`app-gitops`](https://github.com/gulinux86/app-gitops) is admitted. Each file holds
+what the application repository may not decide for itself: the Namespace, its mesh
+and gateway labels, and an Application pinned to the `apps` project. The Application
+objects live here rather than there because an Application names its own project —
+a repository that can write them could name `platform`.
 
 ## Sync waves
 
@@ -67,7 +75,7 @@ annotation makes the order explicit:
 | 8 | EC2NodeClass + NodePool | Instances of wave 7's CRDs, so they follow it |
 | 9 | kube-prometheus-stack | The platform starts reporting on itself |
 | 10 | Kiali | Reads Prometheus, so it follows it |
-| 11 | `app-sim` Namespace + Application | Application (apps project, `app-gitops`); its pods need wave 8's NodePool and wave 6's gateway |
+| 11 | `tenants` | Application onboarding from `tenants/`; their pods need wave 8's NodePool and wave 6's gateway |
 
 ## Where the traffic comes from
 
