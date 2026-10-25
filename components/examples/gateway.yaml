@@ -45,11 +45,24 @@ data:
   #
   # Hard spread on hostname: two replicas on one node fail together. No HPA — a
   # fixed two is the availability floor; scaling on load is a separate decision.
+  #
+  # The preStop sleep is for the load balancer in front. A terminating pod leaves the
+  # Service at once, but the ALB learns it from the controller deregistering the
+  # target, seconds later — and keeps sending it requests until then. Sleeping first
+  # keeps Envoy serving through that gap; the native sleep action needs no shell in
+  # the distroless proxy image. Containers merge by name, so this adds to the
+  # generated istio-proxy container rather than replacing it.
   deployment: |
     spec:
       replicas: 2
       template:
         spec:
+          containers:
+            - name: istio-proxy
+              lifecycle:
+                preStop:
+                  sleep:
+                    seconds: 15
           topologySpreadConstraints:
             - maxSkew: 1
               topologyKey: kubernetes.io/hostname

@@ -34,9 +34,15 @@ spec:
     # opt-in, so a namespace cannot publish itself through the shared gateway by
     # accident. CreateNamespace alone does not set labels, and applying it with
     # kubectl would vanish on the next teardown, so Argo CD owns it here.
+    #
+    # pod-readiness-gate-inject: the AWS Load Balancer Controller then adds a readiness
+    # gate to each gateway pod, which stays unready until its target is healthy in the
+    # ALB's target group. Without it a rollout or a drain can retire the old pod while
+    # the ALB still has no healthy target for the new one.
     managedNamespaceMetadata:
       labels:
         gateway-access: "true"
+        elbv2.k8s.aws/pod-readiness-gate-inject: enabled
     automated:
       prune: true
       selfHeal: true
