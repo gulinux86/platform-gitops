@@ -119,6 +119,28 @@ The ConfigMap must live in the `Gateway`'s namespace. Istio ignores a
 `parametersRef` pointing outside it *silently*, and the Service reverts to
 `LoadBalancer`.
 
+## Availability through a node roll
+
+Every node is replaced in an EKS upgrade, and every request crosses the same few
+components on the way in: the ALB, the gateway pods, istiod (which issues the
+certificate a new pod's ztunnel needs before it can connect) and CoreDNS. An
+application with three replicas and a PDB is only as available as the least
+protected of those. So each runs **two replicas, spread across nodes, under a PDB
+allowing one out**:
+
+| Component | Where it is set |
+|---|---|
+| Gateway | `components/examples/gateway.yaml` — `deployment` and `podDisruptionBudget` patches in the ConfigMap |
+| istiod | `components/istio/istiod.yaml` — `autoscaleMin: 2`; the chart renders the PDB only above one |
+| CoreDNS, AWS Load Balancer Controller | `eks-terraform` — EKS add-on configuration and the controller's chart values |
+
+The gateway also has two things that are about the ALB rather than about Kubernetes:
+a readiness gate (the namespace's `elbv2.k8s.aws/pod-readiness-gate-inject` label),
+so a new pod is not Ready until the ALB sees its target healthy; and a 15-second
+`preStop` sleep, so a terminating pod keeps serving until the ALB has deregistered
+it. `eks-upgrade` in `eks-terraform` refuses to start while any of these components
+falls short, and probes this path through the ALB for the whole upgrade.
+
 ## Capacity
 
 Nodes arrive when pods need them. A `NodePool` says what may be provisioned and how

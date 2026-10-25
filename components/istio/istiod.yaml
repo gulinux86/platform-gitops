@@ -15,3 +15,20 @@ pilot:
     requests:
       cpu: 100m
       memory: 128Mi
+
+  # Two, on two nodes. A pod starting on a node needs ztunnel to fetch its
+  # certificate from istiod before it can open a connection; with one istiod, every
+  # pod scheduled while it was being moved — a node-group drain — failed its first
+  # requests (the hml 1.35→1.36 upgrade, 2026-10-25: three, all from a fresh pod).
+  #
+  # The chart sizes istiod through its HPA, so the floor is autoscaleMin, not
+  # replicaCount; and it renders the PodDisruptionBudget (minAvailable: 1) only once
+  # that floor is above one.
+  autoscaleMin: 2
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app: istiod
