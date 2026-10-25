@@ -34,6 +34,32 @@ data:
   service: |
     spec:
       type: ClusterIP
+
+  # Two replicas, on two nodes, and never both evicted at once.
+  #
+  # Every request — the ALB's, the loadgen's — enters through this proxy. With one
+  # replica and no PDB, draining its node (a node-group roll during an EKS upgrade)
+  # cut all ingress until the pod came back elsewhere, however well each app behind
+  # it was protected. Istio creates neither the PDB nor a second replica unless
+  # asked; both keys below are the documented customisation path.
+  #
+  # Hard spread on hostname: two replicas on one node fail together. No HPA — a
+  # fixed two is the availability floor; scaling on load is a separate decision.
+  deployment: |
+    spec:
+      replicas: 2
+      template:
+        spec:
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: DoNotSchedule
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: platform-gateway
+  podDisruptionBudget: |
+    spec:
+      minAvailable: 1
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
