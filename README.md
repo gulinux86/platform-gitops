@@ -132,14 +132,27 @@ allowing one out**:
 |---|---|
 | Gateway | `components/examples/gateway.yaml` — `deployment` and `podDisruptionBudget` patches in the ConfigMap |
 | istiod | `components/istio/istiod.yaml` — `autoscaleMin: 2`; the chart renders the PDB only above one |
+| Karpenter | `components/karpenter/values.yaml` — `replicas: 2`; the chart adds the required anti-affinity and the PDB |
 | CoreDNS, AWS Load Balancer Controller | `eks-terraform` — EKS add-on configuration and the controller's chart values |
 
 The gateway also has two things that are about the ALB rather than about Kubernetes:
 a readiness gate (the namespace's `elbv2.k8s.aws/pod-readiness-gate-inject` label),
 so a new pod is not Ready until the ALB sees its target healthy; and a 15-second
 `preStop` sleep, so a terminating pod keeps serving until the ALB has deregistered
-it. `eks-upgrade` in `eks-terraform` refuses to start while any of these components
-falls short, and probes this path through the ALB for the whole upgrade.
+it.
+
+`eks-upgrade` in `eks-terraform` refuses to start while any of these falls short —
+fewer than two Ready replicas, all on one node, no PDB allowing a disruption, or a
+gateway pod without its readiness gate. Two of those are what a *fresh* cluster's
+bootstrap order leaves behind, not a wrong setting here: replicas placed while only one
+node had registered (a topology spread never moves a pod once placed), and gateway
+pods created before the TargetGroupBinding that injects their gate. The upgrade
+restarts just those Deployments before it begins. It then probes this path through
+the ALB for the whole run: the 1.35 → 1.36 rehearsal on hml served 6,826 requests
+through it with none failed.
+
+Change any of the settings above and the next upgrade will say so before it touches
+the cluster — the list it checks is `CRITICAL` in `scripts/eks-upgrade.sh`.
 
 ## Capacity
 
