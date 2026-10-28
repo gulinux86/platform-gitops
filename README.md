@@ -161,7 +161,7 @@ much; an `EC2NodeClass` says what a node is made of. Both reference AWS by name 
 by tag — never by ARN — for the same reason the controller uses Pod Identity: this
 repository is public.
 
-Three things about that pair are worth knowing before changing them.
+Four things about that pair are worth knowing before changing them.
 
 **The instance list is explicit, and that is not the general advice.** AWS
 recommends breadth: the more types Karpenter may use, the better EC2 optimises, and
@@ -181,6 +181,12 @@ is a different thing from tagging an instance.
 *requests*, so a pod that bursts above its memory request can land on a node that
 cannot hold it. Set `requests` equal to `limits` for non-CPU resources on anything
 that runs here.
+
+**A drain has a deadline.** Expiry (`expireAfter: 24h`) is forceful in Karpenter v1:
+the node is cordoned whatever its pods say, and without `terminationGracePeriod` a pod
+whose PDB never allows an eviction would keep it draining for good — drift too, which
+would hang eks-upgrade's last phase. After 30 minutes the remaining pods are deleted,
+PDB or not. A workload that cannot afford that needs two replicas, not a stricter PDB.
 
 ## Observability
 

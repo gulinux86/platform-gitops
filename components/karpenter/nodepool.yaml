@@ -20,6 +20,19 @@ spec:
       # exercises it while somebody is watching.
       expireAfter: 24h
 
+      # How long a draining node may wait for its pods before Karpenter deletes
+      # them anyway. Without it a drain waits on PDBs forever — and in v1 expiry is
+      # forceful: the node is cordoned at 24h whatever its pods say, so one pod whose
+      # PDB never allows an eviction (a single replica under `minAvailable: 1`, a pod
+      # annotated do-not-disrupt) leaves it cordoned and draining for good. Drift
+      # waits the same way, which would hang eks-upgrade's phase 4 until its hour
+      # runs out.
+      #
+      # 30m: longer than any drain that is going to finish, shorter than that hour,
+      # so an upgrade ends on its own. Past it, PDBs are bypassed — that is the
+      # point. eks-upgrade's `workloads` check blocks on such PDBs before it starts.
+      terminationGracePeriod: 30m
+
       requirements:
         # An explicit list, which is the opposite of the general advice — and the
         # advice loses to an account-level constraint.
