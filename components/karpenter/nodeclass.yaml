@@ -31,6 +31,12 @@ spec:
     - tags:
         karpenter.sh/discovery: eks-hml-cluster
 
+  # Unset, the subnet decides — and today it decides correctly twice over: the
+  # selector matches only the private subnets, and every subnet has
+  # map_public_ip_on_launch = false. Stated here so a discovery tag landing on the
+  # wrong subnet still cannot give a node a public address.
+  associatePublicIPAddress: false
+
   # `@latest` picks up AMI patches without anyone doing anything, and gives two
   # syncs months apart different nodes with no diff in Git — the exact property this
   # repository's version pinning exists to prevent, accepted here and nowhere else.
