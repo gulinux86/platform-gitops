@@ -135,11 +135,20 @@ allowing one out**:
 | Karpenter | `components/karpenter/values.yaml` — `replicas: 2`; the chart adds the required anti-affinity and the PDB |
 | CoreDNS, AWS Load Balancer Controller | `eks-terraform` — EKS add-on configuration and the controller's chart values |
 
-The gateway also has two things that are about the ALB rather than about Kubernetes:
-a readiness gate (the namespace's `elbv2.k8s.aws/pod-readiness-gate-inject` label),
-so a new pod is not Ready until the ALB sees its target healthy; and a 15-second
-`preStop` sleep, so a terminating pod keeps serving until the ALB has deregistered
-it.
+The gateway also has three things that are about the ALB rather than about
+Kubernetes:
+
+- a readiness gate (the namespace's `elbv2.k8s.aws/pod-readiness-gate-inject` label),
+  so a new pod is not Ready until the ALB sees its target healthy;
+- a 40-second `preStop` sleep (grace period 60), so a terminating pod keeps serving
+  until the ALB has deregistered it — even when the Load Balancer Controller is
+  changing leader, which took 21s once;
+- a node affinity to Karpenter's nodes, so it is never drained together with the
+  controller that deregisters it. The controller runs on the system node group; a
+  gateway pod there was drained in the same moment as the controller's leader in the
+  second 1.35 → 1.36 rehearsal, and three requests reached a stopped pod. On
+  Karpenter's nodes the gateway moves in the upgrade's last phase, after the system
+  nodes have settled.
 
 `eks-upgrade` in `eks-terraform` refuses to start while any of these falls short —
 fewer than two Ready replicas, all on one node, no PDB allowing a disruption, or a
@@ -148,8 +157,9 @@ bootstrap order leaves behind, not a wrong setting here: replicas placed while o
 node had registered (a topology spread never moves a pod once placed), and gateway
 pods created before the TargetGroupBinding that injects their gate. The upgrade
 restarts just those Deployments before it begins. It then probes this path through
-the ALB for the whole run: the 1.35 → 1.36 rehearsal on hml served 6,826 requests
-through it with none failed.
+the ALB for the whole run: the first 1.35 → 1.36 rehearsal with these settings served
+6,826 requests with none failed; the second, 7,676 with three failed, which is what
+the affinity and the longer sleep above fix.
 
 Change any of the settings above and the next upgrade will say so before it touches
 the cluster — the list it checks is `CRITICAL` in `scripts/eks-upgrade.sh`.
