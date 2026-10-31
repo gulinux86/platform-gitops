@@ -29,10 +29,25 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: apps
-  source:
-    repoURL: https://github.com/gulinux86/app-gitops
-    targetRevision: main
-    path: apps/sim
+  # Three sources from the same repository: the shared service chart, the values
+  # file it is rendered with (`ref: values` is what `$values` names), and the plain
+  # manifests that are not a service — the load generator.
+  sources:
+    - repoURL: https://github.com/gulinux86/app-gitops
+      targetRevision: main
+      path: charts/service
+      helm:
+        # The release name is the resource name: Deployment, Service, PDB and
+        # HTTPRoute are all `sim`, as the plain manifests before the chart were.
+        releaseName: sim
+        valueFiles:
+          - $values/apps/sim/values.yaml
+    - repoURL: https://github.com/gulinux86/app-gitops
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/gulinux86/app-gitops
+      targetRevision: main
+      path: apps/sim/manifests
   destination:
     server: https://kubernetes.default.svc
     namespace: app-sim
