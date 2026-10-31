@@ -159,7 +159,8 @@ pods created before the TargetGroupBinding that injects their gate. The upgrade
 restarts just those Deployments before it begins. It then probes this path through
 the ALB for the whole run: the first 1.35 → 1.36 rehearsal with these settings served
 6,826 requests with none failed; the second, 7,676 with three failed, which is what
-the affinity and the longer sleep above fix.
+the affinity and the longer sleep above fix — the run after them served 7,113 with none
+failed.
 
 Change any of the settings above and the next upgrade will say so before it touches
 the cluster — the list it checks is `CRITICAL` in `scripts/eks-upgrade.sh`.
