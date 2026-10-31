@@ -52,17 +52,41 @@ data:
   # keeps Envoy serving through that gap; the native sleep action needs no shell in
   # the distroless proxy image. Containers merge by name, so this adds to the
   # generated istio-proxy container rather than replacing it.
+  #
+  # 40s, not the 15 it was: the gap is not always seconds. The hml 1.35 -> 1.36
+  # upgrade of 2026-10-31 drained a system node holding both a gateway pod and the
+  # Load Balancer Controller's leader. No controller deregistered anything until a
+  # new leader took over, 21s later; the pod had stopped at 15, and the ALB sent
+  # three requests to it (one 502, two connection failures). 40 covers a leader
+  # change plus the ALB's own propagation. The grace period has to exceed it, or
+  # the kubelet kills Envoy mid-sleep: 60, from Kubernetes' default 30.
+  #
+  # And only on Karpenter's nodes. The system node group runs the controller, so a
+  # gateway there can be drained in the same moment as the thing that would
+  # deregister it — which is how the above happened. On Karpenter's nodes the
+  # gateway moves in eks-upgrade's last phase, when the controller is settled, the
+  # same rule that moves applications last. Pending until Karpenter's first nodes
+  # exist after a fresh deploy; nothing waits on it, since the root Application
+  # does not gate waves on a child's health.
   deployment: |
     spec:
       replicas: 2
       template:
         spec:
+          terminationGracePeriodSeconds: 60
           containers:
             - name: istio-proxy
               lifecycle:
                 preStop:
                   sleep:
-                    seconds: 15
+                    seconds: 40
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: karpenter.sh/nodepool
+                        operator: Exists
           topologySpreadConstraints:
             - maxSkew: 1
               topologyKey: kubernetes.io/hostname
