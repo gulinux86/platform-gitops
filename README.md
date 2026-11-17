@@ -283,6 +283,41 @@ pin the alias.
 2. An `Application` under `apps/`, numbered by its wave
 3. Commit — Argo CD reconciles the rest
 
+## CI
+
+`.github/workflows/ci.yml` runs on every pull request into `main`, on every push to
+it, and daily. No path filters, so each job can be a required check.
+
+| Job | What fails it |
+|---|---|
+| `validate` | a manifest the Kubernetes or CRD schemas reject (`kubeconform -strict`; a manifest is any file with a top-level `kind`, so Helm values are skipped); a tenant that breaks the admission shape below |
+| `lint` | actionlint on the workflows, shellcheck on the scripts |
+
+A tenant (`scripts/ci/check_tenants.py`) must have:
+
+- one Namespace, `app-<name>`, in a file of the same name, labelled
+  `istio.io/dataplane-mode: ambient`, and `gateway-access: "true"` when a values file
+  sets a route;
+- Applications named `app-<name>` or `app-<name>-<service>`, in `argocd`, under
+  `project: apps`, deploying to that Namespace, with the resources finalizer and
+  automated sync;
+- every source from app-gitops; every values file and manifests path present there
+  at the source's `targetRevision` — so the application's pull request merges first;
+- a manifests path under the tenant's own `apps/<name>/`, not another application's;
+- the `releaseName` app-gitops' layout gives the values file (`apps/<app>/values.yaml`
+  → `<app>`, `apps/<app>/<svc>/values.yaml` → `<app>-<svc>`), the one its CI renders
+  and checks under;
+- no Namespace, Application or release another tenant already claims.
+
+The daily run is for app-gitops moving or deleting a file a tenant here still names:
+nothing in this repository changes when that happens.
+
+Locally (PyYAML and a clone of app-gitops):
+
+```bash
+python3 scripts/ci/check_tenants.py ../app-gitops
+```
+
 ## Phases
 
 Phase 1 is what is here, and it is **proven**: traffic reaches the demo backend
