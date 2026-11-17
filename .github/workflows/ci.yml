@@ -1,0 +1,108 @@
+# Fails a pull request whose manifests or tenants the cluster would refuse, before it
+# reaches main and Argo CD.
+#
+#   validate  every manifest here against the Kubernetes and CRD schemas (Helm values
+#             files under components/ are not manifests and are skipped), then every
+#             tenant against the admission shape and the app-gitops files it points at
+#             (scripts/ci/check_tenants.py)
+#   lint      actionlint on the workflows, shellcheck on the scripts
+#
+# The schedule is for the half of a tenant that lives elsewhere: app-gitops can move
+# or delete a values file a tenant here still names, and nothing in this repository
+# changes when it does. A daily run reports it before the next sync does.
+#
+# No path filters. Every job is meant to be a required check, and a required check
+# that a path filter skipped never reports, which blocks the merge for good.
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The newest Kubernetes schema set kubeconform's catalog publishes; the cluster
+  # runs a later minor, and the kinds here are the same in both.
+  KUBERNETES_SCHEMA_VERSION: 1.34.12
+  # CRD schemas (Application, NodePool, EC2NodeClass, Gateway API) from a pinned
+  # commit of the community catalog.
+  CRD_SCHEMAS: https://raw.githubusercontent.com/datreeio/CRDs-catalog/3eb90d47aba8d61919d4419dd38301536e32a94b/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
+  APP_GITOPS: https://github.com/gulinux86/app-gitops
+  ACTIONLINT_VERSION: 1.7.12
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+  SHELLCHECK_VERSION: v0.11.0
+  SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+
+      - name: Install tools
+        run: ./scripts/ci/install-tools.sh
+
+      # A manifest is a file with a top-level kind; that is what tells
+      # components/karpenter/nodepool.yaml from components/karpenter/values.yaml.
+      - name: Kubernetes and CRD schemas
+        run: |
+          set -euo pipefail
+          mapfile -t MANIFESTS < <(git ls-files '*.yaml' '*.yml' | xargs grep -l -E '^kind:')
+          printf '%s\n' "${MANIFESTS[@]}"
+          kubeconform -strict -summary -output text \
+            -kubernetes-version "$KUBERNETES_SCHEMA_VERSION" \
+            -schema-location default -schema-location "$CRD_SCHEMAS" \
+            "${MANIFESTS[@]}"
+
+      # Full history: a tenant may pin a branch, tag or commit as its targetRevision.
+      - name: Fetch app-gitops
+        run: git clone --quiet --no-checkout "$APP_GITOPS" "$RUNNER_TEMP/app-gitops"
+
+      - name: Tenants
+        run: python3 scripts/ci/check_tenants.py "$RUNNER_TEMP/app-gitops"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+
+      - name: Install shellcheck
+        run: |
+          set -euo pipefail
+          TARBALL="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -sSfLo "/tmp/$TARBALL" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/${TARBALL}"
+          echo "${SHELLCHECK_SHA256}  /tmp/${TARBALL}" | sha256sum -c -
+          tar -xJf "/tmp/$TARBALL" -C /tmp
+          sudo install "/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          TARBALL="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfLo "/tmp/$TARBALL" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${TARBALL}"
+          echo "${ACTIONLINT_SHA256}  /tmp/${TARBALL}" | sha256sum -c -
+          tar -xzf "/tmp/$TARBALL" -C /tmp actionlint
+          sudo install /tmp/actionlint /usr/local/bin/actionlint
+
+      - name: shellcheck — scripts
+        run: |
+          set -euo pipefail
+          mapfile -t SCRIPTS < <(git ls-files '*.sh')
+          shellcheck "${SCRIPTS[@]}"
+
+      - name: actionlint — workflows, and shellcheck on their run blocks
+        run: actionlint -color
