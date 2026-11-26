@@ -35,16 +35,30 @@ data:
     spec:
       type: ClusterIP
 
-  # Two replicas, on two nodes, and never both evicted at once.
+  # At least two replicas, on two nodes, never both evicted at once — and more under
+  # load.
   #
   # Every request — the ALB's, the loadgen's — enters through this proxy. With one
   # replica and no PDB, draining its node (a node-group roll during an EKS upgrade)
   # cut all ingress until the pod came back elsewhere, however well each app behind
-  # it was protected. Istio creates neither the PDB nor a second replica unless
-  # asked; both keys below are the documented customisation path.
+  # it was protected. Istio creates neither the HPA, the PDB nor a second replica
+  # unless asked; the keys below are the documented customisation path, and Istio
+  # renders an HPA or PDB only when its key is present.
   #
-  # Hard spread on hostname: two replicas on one node fail together. No HPA — a
-  # fixed two is the availability floor; scaling on load is a separate decision.
+  # The floor is the HPA's minReplicas, not `replicas` on the Deployment. Istio's
+  # generated Deployment leaves replicas unset so an HPA can own it; set in the patch,
+  # istiod would write 2 back on every reconcile and undo each scale-up.
+  #
+  # Two constraints, hard on node and soft on zone. Hostname, DoNotSchedule: two
+  # replicas on one node fail together. Zone, ScheduleAnyway: one replica per zone
+  # survives losing a zone, but a hard zone spread would leave the replacement
+  # Pending in that very outage — the lost zone's nodes still count as a domain
+  # until deleted, so the scheduler insists on the zone that is down. The same
+  # reasoning, at more length, is in components/istio/istiod.yaml.
+  #
+  # The resource requests are explicit because the HPA's target is a percentage of
+  # them. They are Istio's proxy defaults; stated here they cannot move under the
+  # HPA with a chart bump.
   #
   # The preStop sleep is for the load balancer in front. A terminating pod leaves the
   # Service at once, but the ALB learns it from the controller deregistering the
@@ -70,12 +84,15 @@ data:
   # does not gate waves on a child's health.
   deployment: |
     spec:
-      replicas: 2
       template:
         spec:
           terminationGracePeriodSeconds: 60
           containers:
             - name: istio-proxy
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
               lifecycle:
                 preStop:
                   sleep:
@@ -94,9 +111,52 @@ data:
               labelSelector:
                 matchLabels:
                   gateway.networking.k8s.io/gateway-name: platform-gateway
+            - maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: platform-gateway
+
+  # 2 to 4 on CPU, at 70% of the 100m request — lower than istiod's 80 because this
+  # is on the request path: a saturated gateway adds latency to every request before
+  # the HPA has reacted. The ceiling is small for the same reason as istiod's: the
+  # NodePool's 20 vCPU.
+  #
+  # Scale-up uses the HPA's defaults, which are fast. Scale-down is one pod per
+  # minute after five calm minutes, because removing a gateway pod is not free: it
+  # sleeps 40s in preStop while the ALB deregisters it. Dropping several at once,
+  # right after a spike, puts the load back on fewer pods while the ALB is still
+  # rebalancing.
+  #
+  # scaleTargetRef is filled in by Istio, pointing at the Deployment it generates.
+  horizontalPodAutoscaler: |
+    spec:
+      minReplicas: 2
+      maxReplicas: 4
+      metrics:
+        - type: Resource
+          resource:
+            name: cpu
+            target:
+              type: Utilization
+              averageUtilization: 70
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+
+  # AlwaysAllow: a pod that is not Ready can be evicted even with the budget spent.
+  # The common case here is a new pod still held back by its ALB readiness gate
+  # when a drain begins; it serves no traffic, and blocking the drain on it would
+  # hold the node until Karpenter's 30m terminationGracePeriod forces it.
   podDisruptionBudget: |
     spec:
       minAvailable: 1
+      unhealthyPodEvictionPolicy: AlwaysAllow
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway

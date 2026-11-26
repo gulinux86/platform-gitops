@@ -22,13 +22,65 @@ pilot:
   # requests (the hml 1.35→1.36 upgrade, 2026-10-25: three, all from a fresh pod).
   #
   # The chart sizes istiod through its HPA, so the floor is autoscaleMin, not
-  # replicaCount; and it renders the PodDisruptionBudget (minAvailable: 1) only once
-  # that floor is above one.
+  # replicaCount; and it renders the PodDisruptionBudget only once that floor is
+  # above one.
+  #
+  # HPA: 2 to 4 on CPU. istiod's load is config pushes — a burst of new pods, a
+  # rollout across tenants, a node roll that reconnects every ztunnel at once — so it
+  # spikes rather than climbs. The ceiling is the chart's 5 lowered by one: the
+  # NodePool's 20 vCPU is the whole cluster's budget. CPU target is the chart's
+  # default 80, stated so the HPA's behaviour is readable from this file; it is a
+  # percentage of the 100m request above.
+  #
+  # Scale-down slowly and one pod at a time. Every proxy and ztunnel holding an xDS
+  # stream to a removed replica reconnects to the others and receives a full push;
+  # dropping two at once, seconds after a spike, recreates the spike.
+  autoscaleEnabled: true
   autoscaleMin: 2
+  autoscaleMax: 4
+  cpu:
+    targetAverageUtilization: 80
+  autoscaleBehavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+
+  # PDB: one replica may be out, never both. The chart's default, stated here so
+  # it is not lost the day autoscaleMin drops to 1 and the chart stops rendering it.
+  #
+  # AlwaysAllow: a replica that is not Ready (crash-looping, stuck starting) can be
+  # evicted even when the budget is spent. Without it such a pod blocks a node drain
+  # until Karpenter's terminationGracePeriod (30m) forces it — and evicting a pod
+  # that serves nothing protects nothing.
+  pdb:
+    minAvailable: 1
+    unhealthyPodEvictionPolicy: AlwaysAllow
+
+  # Two constraints, hard on node and soft on zone.
+  #
+  # Hostname, DoNotSchedule: two replicas on one node fail together in one drain,
+  # which is the failure above. eks-upgrade refuses to start while both share a node.
+  #
+  # Zone, ScheduleAnyway: the cluster spans us-east-1a and 1b, and a replica in each
+  # survives a zone going away. Soft on purpose. A hard zone spread is a trap in
+  # exactly the outage it is meant for: the lost zone's nodes still count as a domain
+  # until they are deleted, so the replacement replica — and every replica the HPA
+  # asks for — must land in the zone that is down, and stays Pending. Preferred, the
+  # scheduler and Karpenter still split the replicas across zones whenever both zones
+  # have room, which is always outside an outage.
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname
       whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app: istiod
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
       labelSelector:
         matchLabels:
           app: istiod
