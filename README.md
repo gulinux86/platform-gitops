@@ -125,15 +125,24 @@ Every node is replaced in an EKS upgrade, and every request crosses the same few
 components on the way in: the ALB, the gateway pods, istiod (which issues the
 certificate a new pod's ztunnel needs before it can connect) and CoreDNS. An
 application with three replicas and a PDB is only as available as the least
-protected of those. So each runs **two replicas, spread across nodes, under a PDB
-allowing one out**:
+protected of those. So each runs **at least two replicas, spread hard across nodes
+and soft across zones, under a PDB allowing one out**:
 
 | Component | Where it is set |
 |---|---|
-| Gateway | `components/examples/gateway.yaml` — `deployment` and `podDisruptionBudget` patches in the ConfigMap |
-| istiod | `components/istio/istiod.yaml` — `autoscaleMin: 2`; the chart renders the PDB only above one |
+| Gateway | `components/examples/gateway.yaml` — `deployment`, `horizontalPodAutoscaler` (2–4) and `podDisruptionBudget` patches in the ConfigMap |
+| istiod | `components/istio/istiod.yaml` — HPA 2–4 (`autoscaleMin`/`autoscaleMax`); the chart renders the PDB only above one |
 | Karpenter | `components/karpenter/values.yaml` — `replicas: 2`; the chart adds the required anti-affinity and the PDB |
 | CoreDNS, AWS Load Balancer Controller | `eks-terraform` — EKS add-on configuration and the controller's chart values |
+
+The gateway and istiod also scale on CPU, and scale down one pod a minute after five
+calm minutes: a removed gateway pod sleeps 40s while the ALB deregisters it, and a
+removed istiod replica sends every proxy it served to the others for a full push.
+The zone spread is `ScheduleAnyway` deliberately — a hard one would leave
+replacements Pending in the very zone outage it exists for, since the lost zone's
+nodes still count as a domain until they are deleted. Both PDBs use
+`unhealthyPodEvictionPolicy: AlwaysAllow`, so a pod that is not Ready never blocks a
+drain.
 
 The gateway also has three things that are about the ALB rather than about
 Kubernetes:
