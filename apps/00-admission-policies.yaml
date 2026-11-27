@@ -1,0 +1,34 @@
+# Admission policies — wave 0, with the Gateway API CRDs.
+#
+# ValidatingAdmissionPolicy is built into the API server, so this depends on nothing
+# else in the repository and can land first. It has to land before wave 11: a policy
+# applied after the tenants only judges their next change, and lets every workload
+# already admitted keep whatever shape it had.
+#
+# What the policies require, and why each is enforced here rather than only in the
+# chart, is in components/policies/.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: admission-policies
+  namespace: argocd
+  # Cascading delete stops at an Application without this finalizer; see
+  # apps/02-istio-base.yaml for what that once left behind.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/gulinux86/platform-gitops
+    targetRevision: main
+    path: components/policies
+  destination:
+    server: https://kubernetes.default.svc
+    # Cluster-scoped objects only; the namespace is where Argo CD records them.
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

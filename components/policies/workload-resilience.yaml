@@ -1,0 +1,105 @@
+# The resilience floor for every application workload, enforced by the API server.
+#
+# app-gitops' service chart already renders all of this, and its CI refuses values
+# that would break it. That covers what goes through the chart. This covers what
+# does not: plain manifests under apps/<app>/manifests/, a chart someone vendors
+# later, a `kubectl apply` during an incident. Without it the standard holds only as
+# long as everyone uses the chart.
+#
+# What it requires of a Deployment or StatefulSet in an `app-*` namespace:
+#
+#   - a topology spread on hostname with DoNotSchedule — every replica on one node is
+#     every replica gone in one drain, PDB or not;
+#   - a topology spread on zone, hard or soft — the chart's is soft, see why in
+#     components/istio/istiod.yaml;
+#   - CPU and memory requests on every container — the HPA's target is a percentage
+#     of the CPU request, and Karpenter places pods by requests.
+#
+# What it cannot require, and where that is checked instead:
+#
+#   - two or more replicas. A Deployment an HPA manages has no `replicas` in its
+#     manifest, and the API server defaults the missing field to 1 before this policy
+#     runs — so a check here would refuse every autoscaled service. The chart's schema
+#     holds minReplicas and replicas to 2+, and eks-upgrade checks the live count.
+#   - a PodDisruptionBudget. A policy sees one object; whether a PDB selects it is a
+#     question about other objects. The chart always renders one, and eks-upgrade
+#     refuses to start while a workload has none.
+#
+# Platform namespaces are out of scope: their workloads come from third-party charts
+# with their own shapes, and the critical ones are held to the same floor by
+# eks-upgrade's CRITICAL list, which blocks an upgrade rather than a deploy.
+#
+# Exemption: annotate the workload `platform/resilience-exempt: "<why>"`. The reason
+# must be non-empty — it is what a reviewer reads in the pull request. It exists for
+# workloads that are not services, such as app-sim's single-replica load generator.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: workload-resilience
+spec:
+  # Fail closed: if the API server cannot evaluate the policy, the workload is not
+  # admitted. The policy is in-process CEL with no webhook behind it, so there is no
+  # endpoint whose outage this would turn into a deploy freeze.
+  failurePolicy: Fail
+
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets"]
+
+  matchConditions:
+    # Only the namespaces the `apps` AppProject may deploy to.
+    - name: application-namespace
+      expression: request.namespace.startsWith('app-')
+    - name: not-exempt
+      expression: >-
+        !has(object.metadata.annotations) ||
+        !('platform/resilience-exempt' in object.metadata.annotations) ||
+        size(object.metadata.annotations['platform/resilience-exempt']) == 0
+
+  variables:
+    - name: spread
+      expression: >-
+        has(object.spec.template.spec.topologySpreadConstraints)
+        ? object.spec.template.spec.topologySpreadConstraints : []
+    - name: workload
+      expression: object.kind + ' ' + request.namespace + '/' + object.metadata.name
+
+  validations:
+    - expression: >-
+        variables.spread.exists(c, c.topologyKey == 'kubernetes.io/hostname'
+        && c.whenUnsatisfiable == 'DoNotSchedule')
+      messageExpression: >-
+        variables.workload + ': needs a topologySpreadConstraint on
+        kubernetes.io/hostname with whenUnsatisfiable: DoNotSchedule, or one node
+        drain takes every replica'
+      reason: Invalid
+
+    - expression: >-
+        variables.spread.exists(c, c.topologyKey == 'topology.kubernetes.io/zone')
+      messageExpression: >-
+        variables.workload + ': needs a topologySpreadConstraint on
+        topology.kubernetes.io/zone (ScheduleAnyway is enough)'
+      reason: Invalid
+
+    - expression: >-
+        object.spec.template.spec.containers.all(c,
+        has(c.resources) && has(c.resources.requests)
+        && 'cpu' in c.resources.requests && 'memory' in c.resources.requests)
+      messageExpression: >-
+        variables.workload + ': every container needs CPU and memory requests —
+        the HPA scales on a percentage of the CPU request, and Karpenter places pods
+        by requests'
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: workload-resilience
+spec:
+  policyName: workload-resilience
+  # Deny refuses the object. Audit also records the refusal in the API server's audit
+  # log, which is where a denied Argo CD sync can be traced from after the fact.
+  validationActions: [Deny, Audit]

@@ -65,6 +65,7 @@ annotation makes the order explicit:
 | Wave | Component | Why here |
 |---|---|---|
 | 0 | Gateway API CRDs | `Gateway` and `HTTPRoute` are instances of these |
+| 0 | Admission policies | Built into the API server; must exist before wave 11 admits any workload |
 | 1 | cert-manager | Prerequisite for the ADOT operator and for issued TLS |
 | 2 | istio-base | Istio's CRDs and cluster roles |
 | 3 | istiod | Control plane, `profile: ambient` |
@@ -132,7 +133,7 @@ and soft across zones, under a PDB allowing one out**:
 |---|---|
 | Gateway | `components/examples/gateway.yaml` — `deployment`, `horizontalPodAutoscaler` (2–4) and `podDisruptionBudget` patches in the ConfigMap |
 | istiod | `components/istio/istiod.yaml` — HPA 2–4 (`autoscaleMin`/`autoscaleMax`); the chart renders the PDB only above one |
-| Karpenter | `components/karpenter/values.yaml` — `replicas: 2`; the chart adds the required anti-affinity and the PDB |
+| Karpenter | `components/karpenter/values.yaml` — `replicas: 2`; the chart adds the required anti-affinity, a zone spread and the PDB. No HPA: a leader-elected singleton |
 | CoreDNS, AWS Load Balancer Controller | `eks-terraform` — EKS add-on configuration and the controller's chart values |
 
 The gateway and istiod also scale on CPU, and scale down one pod a minute after five
@@ -173,6 +174,23 @@ failed.
 
 Change any of the settings above and the next upgrade will say so before it touches
 the cluster — the list it checks is `CRITICAL` in `scripts/eks-upgrade.sh`.
+
+### The same floor for applications
+
+Applications get it from `charts/service` in `app-gitops`: an HPA (3–6), a PDB, a
+hard hostname spread and a soft zone spread. The API server enforces the parts that
+fit in one object through a `ValidatingAdmissionPolicy`
+(`components/policies/workload-resilience.yaml`): every Deployment and StatefulSet in
+an `app-*` namespace needs the hostname spread with `DoNotSchedule`, a zone spread, and
+CPU and memory requests on every container. That catches what the chart cannot — plain
+manifests, a vendored chart, a manual `kubectl apply`.
+
+Replica count and the PDB are not in it: an autoscaled Deployment reaches the API
+server with `replicas` defaulted to 1, and whether a PDB covers a workload is a
+question about another object. The chart's schema and `eks-upgrade` hold those.
+
+A workload that is not a service opts out with the annotation
+`platform/resilience-exempt: "<why>"`; an empty reason does not count.
 
 ## Capacity
 
