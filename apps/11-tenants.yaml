@@ -2,7 +2,7 @@
 #
 # apps/ holds what extends the cluster; tenants/ is a chart that admits
 # applications — one short file per application in tenants/registry/, rendered into
-# its Namespace (with the mesh and gateway labels), its secrets identity and its
+# its Namespace (with the mesh, gateway and secrets labels) and its
 # Application under the `apps` project. Same root, same review, but a change to an
 # application's admission never sits in the same directory as a change to Istio or
 # Karpenter.

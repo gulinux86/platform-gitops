@@ -6,7 +6,8 @@ One tenant per file in registry/. For registry/<name>.yaml this renders:
                                          not one this platform admits
     - gateway-access: "true"             when `gateway: true`
     - platform/team: <team>
-  ServiceAccount + SecretStore           when `secrets: true`
+    - platform/secrets: "true"           when `secrets: true`: may read apps/<name>/*
+                                         through the ClusterSecretStore `aws`
   Application(s) under `project: apps`   deploying app-gitops into app-<name>
 
 What it holds is what the application repository may not decide for itself: the
@@ -61,37 +62,12 @@ metadata:
     gateway-access: "true"
     {{- end }}
     platform/team: {{ $team | quote }}
-{{- if $t.secrets }}
----
-# The identity this namespace reads Secrets Manager with. No pod uses it: the
-# SecretStore below presents a token for it, and the IAM role it names trusts only
-# this namespace and this ServiceAccount, so a SecretStore anywhere else that names
-# the same role is refused by STS.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: external-secrets
-  namespace: {{ $ns }}
-  annotations:
-    eks.amazonaws.com/role-arn: {{ printf "arn:aws:iam::%s:role/%s%s-secrets" ($.Values.aws.accountId | toString) $.Values.aws.secretsRolePrefix $name | quote }}
----
-# The store every ExternalSecret in this namespace names. The role it assumes reads
-# apps/{{ $name }}/* and nothing else; IAM, not this object, is what confines it.
-apiVersion: external-secrets.io/v1
-kind: SecretStore
-metadata:
-  name: aws
-  namespace: {{ $ns }}
-spec:
-  provider:
-    aws:
-      service: SecretsManager
-      region: {{ $.Values.aws.region }}
-      auth:
-        jwt:
-          serviceAccountRef:
-            name: external-secrets
-{{- end }}
+    {{- if $t.secrets }}
+    # The ClusterSecretStore `aws` serves only namespaces carrying this. Which keys
+    # this one may read — apps/{{ $name }}/* and nothing else — is decided by the
+    # admission policy in components/policies/tenant-secrets.yaml.
+    platform/secrets: "true"
+    {{- end }}
 {{- if not $services }}
 {{- include "tenants.application" (dict "app" $ns "ns" $ns "release" $name "values" (printf "apps/%s/values.yaml" $name) "manifests" (ternary (printf "apps/%s/manifests" $name) "" (eq $t.manifests true)) "revision" $revision "root" $) }}
 {{- else }}

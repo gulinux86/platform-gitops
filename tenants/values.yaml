@@ -1,23 +1,9 @@
 # What every tenant shares in this environment. A tenant's own file is under
 # registry/; this one changes only when the environment does.
-
-aws:
-  # The one place this repository names the AWS account. A tenant's secrets role is
-  # referenced by ARN from its ServiceAccount, and an ARN carries the account; it is
-  # built here from the account and the role's name instead of being written into
-  # every tenant, so moving to another account or environment is this line.
-  #
-  # An account ID is an identifier, not a credential — AWS does not treat it as a
-  # secret — but the rest of this repository refers to AWS by name only, so it stays
-  # confined to this file.
-  accountId: "889384902110"
-  region: us-east-1
-
-  # Terraform (eks-terraform, workload/modules/tenant-secrets) creates one role per
-  # tenant named <secretsRolePrefix><name>-secrets, trusting only the ServiceAccount
-  # app-<name>/external-secrets and reading only apps/<name>/* in Secrets Manager.
-  # Both sides build the name the same way; change one, change the other.
-  secretsRolePrefix: eks-hml-app-
+#
+# No AWS account, role or region here: tenants read secrets through the
+# ClusterSecretStore `aws` (components/external-secrets/), with the External Secrets
+# Operator's own identity.
 
 # Where every tenant's application comes from. A tenant may pin another revision
 # with `revision:` in its own file.
