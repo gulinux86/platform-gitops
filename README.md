@@ -12,7 +12,10 @@ The cluster itself, Argo CD, and the AWS-side plumbing come from
 **1. No `kind: Secret` in this repository.** A Secret's `data` is base64, not
 encryption — anyone can decode it in one command, and this repository is public.
 Real secrets go to AWS Secrets Manager and are referenced with an `ExternalSecret`,
-so Git holds the pointer and never the value.
+so Git holds the pointer and never the value. The External Secrets Operator
+(`components/external-secrets/`) holds no AWS permissions itself: each namespace's
+`SecretStore` assumes an IAM role that trusts only that namespace's ServiceAccount
+and reads only that application's prefix, so one tenant cannot read another's.
 
 **2. Nothing here creates an AWS resource.** No `type: LoadBalancer`, no
 `kind: Ingress`. A resource a controller creates from a manifest never enters
@@ -67,6 +70,7 @@ annotation makes the order explicit:
 | 0 | Gateway API CRDs | `Gateway` and `HTTPRoute` are instances of these |
 | 0 | Admission policies | Built into the API server; must exist before wave 11 admits any workload |
 | 1 | cert-manager | Prerequisite for the ADOT operator and for issued TLS |
+| 1 | External Secrets Operator | Turns Secrets Manager entries into Secrets; before anything that consumes one |
 | 2 | istio-base | Istio's CRDs and cluster roles |
 | 3 | istiod | Control plane, `profile: ambient` |
 | 4 | istio-cni | Node redirection — ambient has no sidecar to intercept |
