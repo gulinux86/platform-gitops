@@ -1,0 +1,109 @@
+# External Secrets Operator: how a secret in AWS Secrets Manager becomes a Secret in
+# a namespace, without its value ever being in Git.
+#
+# Rule 1 of this repository has always said "use an ExternalSecret"; until this
+# chart, nothing in the cluster could act on one.
+#
+# Authentication: the operator itself has NO AWS permissions — no IRSA annotation,
+# no Pod Identity association. Each namespace authenticates on its own: its
+# SecretStore presents a token for a ServiceAccount in that namespace, and assumes
+# an IAM role whose trust policy names exactly that namespace and ServiceAccount,
+# and whose policy reads only that application's prefix in Secrets Manager.
+#
+# That is what isolates tenants, and it has to be in IAM rather than here: the
+# `apps` AppProject lets an application create any namespaced object, a SecretStore
+# included. One pointing at another tenant's role fails at STS, because the token it
+# presents is for the wrong namespace. A controller with its own broad role would
+# instead serve any SecretStore that asked, and every tenant could read every
+# secret.
+#
+# The per-tenant role and its ServiceAccount are the next step (identity per
+# application); this file installs the operator they will use.
+
+# Two of each component, on two nodes, never both evicted at once — the floor every
+# component on the traffic or deploy path is held to (see the README's "Availability
+# through a node roll"). Not an HPA: the controller and the cert controller are
+# leader-elected, so a third replica is another standby, and the webhook's load is
+# one admission call per ExternalSecret change.
+#
+# Without leader election two controllers would reconcile the same ExternalSecret
+# and race each other's writes; the chart leaves it off because its default is one
+# replica.
+replicaCount: 2
+leaderElect: true
+
+# Hard on hostname, soft on zone, for the reasons in components/istio/istiod.yaml.
+# The chart adds each component's own labelSelector when none is given.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Memory request equals its limit, the convention across this repository: Karpenter
+# packs by requests, and a pod that grows past its request can land on a node that
+# cannot hold it. The controller's memory grows with the number of ExternalSecrets
+# it caches — raise this before it is OOM-killed, not after.
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 128Mi
+
+# Off for now: the ServiceMonitor CRD arrives with kube-prometheus-stack in wave 9,
+# and this chart syncs in wave 1. Turning it on here would fail the sync on a fresh
+# cluster until then.
+serviceMonitor:
+  enabled: false
+
+# Validates ExternalSecret and SecretStore objects on admission, failurePolicy Fail
+# (the chart's default): a malformed store is refused when applied rather than
+# discovered when a secret fails to arrive. Fail-closed is why it needs the same
+# two replicas and PDB as the controller — with none Ready, every ExternalSecret
+# change is refused.
+webhook:
+  replicaCount: 2
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 64Mi
+
+# Issues and rotates the webhook's serving certificate itself, so the webhook does
+# not depend on cert-manager. Leader-elected through the same `leaderElect`.
+certController:
+  replicaCount: 2
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 64Mi
