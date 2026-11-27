@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Checks every tenant file against the shape the platform admits applications in,
-and against the app-gitops repository it points at.
+"""Checks every tenant against the shape the platform admits applications in, and
+against the app-gitops repository it points at.
+
+Tenants are rendered from the chart in tenants/ — one file per application under
+tenants/registry/ — and this reads the rendered output, which is what Argo CD
+applies. The chart already refuses a malformed registry file (unknown key, wrong
+file name, missing team); what is checked here is what the chart cannot see: the
+app-gitops files each Application names, and claims across tenants.
 
 A tenant that breaks one of these is accepted by Git and refused, or silently
 wrong, in the cluster: the `apps` AppProject rejects a namespace outside app-*, a
 values file that is not on the branch makes the Application fail to render, and a
 route from a namespace without `gateway-access` is never attached by the gateway.
 
-Per tenant file tenants/<name>.yaml:
-  - exactly one Namespace, named app-<x> and matching the file name, labelled into
-    the ambient mesh;
+Per tenant (registry/<name>.yaml, rendered):
+  - exactly one Namespace, named app-<x>, labelled into the ambient mesh;
   - at least one Application, named like the Namespace or after it
     (<namespace>-<service>), in argocd, under `project: apps`, deploying to that
     Namespace in this cluster, with the resources finalizer (deleting the tenant
@@ -22,7 +27,7 @@ Per tenant file tenants/<name>.yaml:
   - `gateway-access: "true"` on the Namespace when a values file sets a route.
 Across tenants: no Namespace, Application or release claimed twice.
 
-Usage: scripts/ci/check_tenants.py <app-gitops checkout>
+Usage: scripts/ci/check_tenants.py <app-gitops checkout> <rendered tenants.yaml>
 """
 
 import pathlib
@@ -153,9 +158,7 @@ def check_application(where, app, namespace, repo, errors, claims):
     return routed
 
 
-def check_tenant(path, repo, errors, claims):
-    where = str(path)
-    docs = [d for d in yaml.safe_load_all(path.read_text()) if isinstance(d, dict)]
+def check_tenant(where, docs, repo, errors, claims):
     namespaces = [d for d in docs if d.get("kind") == "Namespace"]
     applications = [d for d in docs if d.get("kind") == "Application"]
 
@@ -167,8 +170,6 @@ def check_tenant(path, repo, errors, claims):
     labels = ns.get("labels") or {}
     if not NAMESPACE.match(namespace):
         errors.append(f"{where} — Namespace {namespace!r} must be app-<name>: the apps project deploys nowhere else")
-    if path.stem != namespace:
-        errors.append(f"{where} — the file must be named {namespace}.yaml")
     if labels.get("istio.io/dataplane-mode") != "ambient":
         errors.append(f"{where} — Namespace needs istio.io/dataplane-mode: ambient")
     claims.setdefault(("Namespace", namespace), []).append(where)
@@ -187,16 +188,31 @@ def check_tenant(path, repo, errors, claims):
         errors.append(f"{where} — a values file sets a route, so the Namespace needs gateway-access: \"true\"")
 
 
+def tenant_of(doc):
+    """The tenant namespace a rendered object belongs to."""
+    if doc.get("kind") == "Namespace":
+        return (doc.get("metadata") or {}).get("name", "")
+    if doc.get("kind") == "Application":
+        return ((doc.get("spec") or {}).get("destination") or {}).get("namespace", "")
+    return (doc.get("metadata") or {}).get("namespace", "")
+
+
 def main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         print(__doc__.strip().splitlines()[-1], file=sys.stderr)
         return 2
     repo = AppGitops(sys.argv[1])
+    rendered = pathlib.Path(sys.argv[2])
     errors, claims = [], {}
-    tenants = sorted(pathlib.Path("tenants").glob("*.yaml"))
-    for path in tenants:
-        print(f"== {path}")
-        check_tenant(path, repo, errors, claims)
+    grouped = {}
+    for doc in yaml.safe_load_all(rendered.read_text()):
+        if isinstance(doc, dict):
+            grouped.setdefault(tenant_of(doc), []).append(doc)
+    tenants = sorted(grouped)
+    for namespace in tenants:
+        where = f"tenants/registry/{namespace.removeprefix('app-')}.yaml"
+        print(f"== {where}")
+        check_tenant(where, grouped[namespace], repo, errors, claims)
     for key, owners in claims.items():
         if len(owners) > 1:
             errors.append(f"{' '.join(str(k) for k in key)} is claimed by {len(owners)}: {', '.join(owners)}")

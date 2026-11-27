@@ -1,0 +1,20 @@
+# The disruption-test application: podinfo behind /sim/, plus a load generator.
+#
+# Its manifests live in app-gitops (apps/sim/); this file is the platform's half of
+# the handover. Everything an application may not decide for itself follows from
+# it — the Namespace, joining the mesh, attaching to the gateway, the identity it
+# reads secrets with, and the Application that deploys it under the apps project.
+name: sim
+team: platform
+
+# Routes attach to the shared gateway (the Namespace gets gateway-access: "true").
+gateway: true
+
+# A ServiceAccount and SecretStore in the namespace, reading apps/sim/* through the
+# IAM role Terraform creates for this tenant. sim has no secrets; it carries a store
+# so the chain from tenant to IAM is exercised on every deploy, not first discovered
+# by the first application that needs it.
+secrets: true
+
+# apps/sim/manifests/ — the load generator, which is not a service.
+manifests: true

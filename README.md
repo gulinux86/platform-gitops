@@ -46,18 +46,37 @@ ClusterRoleBinding, or escape its namespace. Argo CD refuses before applying.
 ```
 apps/          one Application per component — the "where and in what order"
 components/    chart values and manifests    — the "what"
-tenants/       one file per application: its Namespace and its Application
+tenants/       a chart admitting applications: one file each under registry/
 ```
 
 Separating them means changing a chart version touches one file and never the
 orchestration.
 
 `tenants/` is how an application from
-[`app-gitops`](https://github.com/gulinux86/app-gitops) is admitted. Each file holds
-what the application repository may not decide for itself: the Namespace, its mesh
-and gateway labels, and an Application pinned to the `apps` project. The Application
-objects live here rather than there because an Application names its own project —
-a repository that can write them could name `platform`.
+[`app-gitops`](https://github.com/gulinux86/app-gitops) is admitted. It is a chart;
+each application is one short file under `tenants/registry/`:
+
+```yaml
+# tenants/registry/orders.yaml
+name: orders        # namespace app-orders, release orders, apps/orders/values.yaml
+team: checkout
+gateway: true       # its routes attach to the shared gateway
+secrets: true       # ServiceAccount + SecretStore reading apps/orders/* in Secrets Manager
+manifests: false    # also sync apps/orders/manifests/
+# services: [api, worker]   # several services, each apps/orders/<svc>/values.yaml
+```
+
+The chart renders what the application repository may not decide for itself: the
+Namespace, its mesh and gateway labels, the identity it reads secrets with, and an
+Application pinned to the `apps` project. The Application objects live here rather
+than there because an Application names its own project — a repository that can
+write them could name `platform`. What every tenant shares in this environment —
+the AWS account and region, the naming of the per-tenant IAM role, the app-gitops
+URL — is in `tenants/values.yaml`, and nowhere else.
+
+`secrets: true` needs the tenant's IAM role, which Terraform creates
+(`tenant_secrets` in eks-terraform's workload tfvars). The SecretStore reports not
+Ready until it exists.
 
 ## Sync waves
 

@@ -2,13 +2,23 @@
 # Installs the tools CI uses, each pinned and checked against its release checksum,
 # so a runner image update cannot change what fails. Bump a version with its sum.
 #
+# Helm renders tenants/ the way Argo CD will. It stays on the 3.x line Argo CD
+# renders with, and on the same version app-gitops' CI pins.
+#
 # Usage: scripts/ci/install-tools.sh      (CI only — installs with sudo)
 set -euo pipefail
 
+HELM_VERSION=v3.22.1
+HELM_SHA256=896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea
 KUBECONFORM_VERSION=v0.8.0
 KUBECONFORM_SHA256=9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
 
 TMP=$(mktemp -d)
+
+curl -sSfLo "$TMP/helm.tgz" "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+echo "$HELM_SHA256  $TMP/helm.tgz" | sha256sum -c -
+tar -xzf "$TMP/helm.tgz" -C "$TMP" linux-amd64/helm
+sudo install "$TMP/linux-amd64/helm" /usr/local/bin/helm
 
 curl -sSfLo "$TMP/kubeconform.tgz" \
   "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
@@ -22,4 +32,5 @@ python3 -m venv "$TMP/venv"
 "$TMP/venv/bin/pip" install --quiet --require-hashes -r scripts/ci/requirements.txt
 echo "$TMP/venv/bin" >>"${GITHUB_PATH:-/dev/null}"
 
+helm version --short
 kubeconform -v

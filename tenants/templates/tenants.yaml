@@ -1,0 +1,105 @@
+{{- /*
+One tenant per file in registry/. For registry/<name>.yaml this renders:
+
+  Namespace app-<name>
+    - istio.io/dataplane-mode: ambient   always; an application outside the mesh is
+                                         not one this platform admits
+    - gateway-access: "true"             when `gateway: true`
+    - platform/team: <team>
+  ServiceAccount + SecretStore           when `secrets: true`
+  Application(s) under `project: apps`   deploying app-gitops into app-<name>
+
+What it holds is what the application repository may not decide for itself: the
+`apps` AppProject denies cluster-scoped resources, so an application cannot create
+its Namespace; mesh and gateway membership are granted here, not requested there;
+and the Application objects stay in this repository because an Application names
+its own project — a repository that could write them could name `platform`.
+
+An application with one service has its chart values at apps/<name>/values.yaml
+and one Application, app-<name>. One with several lists them under `services:`,
+each at apps/<name>/<service>/values.yaml, each its own Application
+app-<name>-<service>. `manifests: true` adds apps/<name>/manifests/: to the single
+Application, or as app-<name>-manifests beside the services.
+
+The registry file is validated here and again in CI against app-gitops
+(scripts/ci/check_tenants.py): a typo in a key fails the render rather than being
+ignored.
+*/ -}}
+{{- $allowed := list "name" "team" "gateway" "secrets" "manifests" "services" "revision" }}
+{{- range $path, $_ := .Files.Glob "registry/*.yaml" }}
+{{- $t := $.Files.Get $path | fromYaml }}
+{{- if hasKey $t "Error" }}
+{{- fail (printf "%s: not valid YAML: %s" $path (get $t "Error")) }}
+{{- end }}
+{{- range $key, $_ := $t }}
+{{- if not (has $key $allowed) }}
+{{- fail (printf "%s: unknown key %q (allowed: %s)" $path $key (join ", " $allowed)) }}
+{{- end }}
+{{- end }}
+{{- $name := required (printf "%s: name is required" $path) $t.name | toString }}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" $name) }}
+{{- fail (printf "%s: name %q must be lowercase letters, digits and hyphens" $path $name) }}
+{{- end }}
+{{- if ne (base $path) (printf "%s.yaml" $name) }}
+{{- fail (printf "%s: the file must be named %s.yaml" $path $name) }}
+{{- end }}
+{{- $team := required (printf "%s: team is required — it is who owns the application" $path) $t.team | toString }}
+{{- $ns := printf "app-%s" $name }}
+{{- $revision := $t.revision | default $.Values.appRepo.revision }}
+{{- $services := $t.services | default list }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    # Joins the ambient mesh. Without it the pods run and simply never join — no
+    # sidecar to be missing, no error, traffic that bypasses ztunnel.
+    istio.io/dataplane-mode: ambient
+    {{- if $t.gateway }}
+    # The shared gateway accepts routes only from namespaces carrying this.
+    gateway-access: "true"
+    {{- end }}
+    platform/team: {{ $team | quote }}
+{{- if $t.secrets }}
+---
+# The identity this namespace reads Secrets Manager with. No pod uses it: the
+# SecretStore below presents a token for it, and the IAM role it names trusts only
+# this namespace and this ServiceAccount, so a SecretStore anywhere else that names
+# the same role is refused by STS.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets
+  namespace: {{ $ns }}
+  annotations:
+    eks.amazonaws.com/role-arn: {{ printf "arn:aws:iam::%s:role/%s%s-secrets" ($.Values.aws.accountId | toString) $.Values.aws.secretsRolePrefix $name | quote }}
+---
+# The store every ExternalSecret in this namespace names. The role it assumes reads
+# apps/{{ $name }}/* and nothing else; IAM, not this object, is what confines it.
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: aws
+  namespace: {{ $ns }}
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: {{ $.Values.aws.region }}
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: external-secrets
+{{- end }}
+{{- if not $services }}
+{{- include "tenants.application" (dict "app" $ns "ns" $ns "release" $name "values" (printf "apps/%s/values.yaml" $name) "manifests" (ternary (printf "apps/%s/manifests" $name) "" (eq $t.manifests true)) "revision" $revision "root" $) }}
+{{- else }}
+{{- range $svc := $services }}
+{{- include "tenants.application" (dict "app" (printf "%s-%s" $ns $svc) "ns" $ns "release" (printf "%s-%s" $name $svc) "values" (printf "apps/%s/%s/values.yaml" $name $svc) "manifests" "" "revision" $revision "root" $) }}
+{{- end }}
+{{- if $t.manifests }}
+{{- include "tenants.application" (dict "app" (printf "%s-manifests" $ns) "ns" $ns "release" "" "values" "" "manifests" (printf "apps/%s/manifests" $name) "revision" $revision "root" $) }}
+{{- end }}
+{{- end }}
+{{- end }}

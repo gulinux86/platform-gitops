@@ -1,9 +1,17 @@
 # Application onboarding, kept apart from the platform's own components.
 #
-# apps/ holds what extends the cluster; tenants/ holds one file per application —
-# its Namespace (with the mesh and gateway labels) and its Application under the
-# `apps` project. Same root, same review, but a change to an application's admission
-# never sits in the same directory as a change to Istio or Karpenter.
+# apps/ holds what extends the cluster; tenants/ is a chart that admits
+# applications — one short file per application in tenants/registry/, rendered into
+# its Namespace (with the mesh and gateway labels), its secrets identity and its
+# Application under the `apps` project. Same root, same review, but a change to an
+# application's admission never sits in the same directory as a change to Istio or
+# Karpenter.
+#
+# A chart rather than an ApplicationSet. An ApplicationSet controller regenerates the
+# Applications it owns, which defeats eks-terraform's destroy: that workflow freezes
+# every Application's automation before deleting anything, and a generator would
+# restore it. Here the tenant Applications stay ordinary children of this one, and
+# the destroy's parents-first freeze already covers them.
 #
 # The Application objects stay in this repository, not in app-gitops, on purpose.
 # An Application chooses its own project, so a repository that can write them can
@@ -26,10 +34,10 @@ spec:
   source:
     repoURL: https://github.com/gulinux86/platform-gitops
     targetRevision: main
-    # No `directory: {recurse: false}`, though it is the intent: holding only a zero
-    # value, the block is dropped from the live object, and root then reports this
-    # Application OutOfSync forever — which eks-upgrade's live check refuses to
-    # start on. Non-recursive is the default.
+    # Argo CD renders it with Helm because the directory holds a Chart.yaml; the
+    # release is named after this Application. The rendered objects are the same
+    # ones the plain files used to be — same names, same owner — so switching to the
+    # chart re-creates nothing.
     path: tenants
   destination:
     server: https://kubernetes.default.svc
