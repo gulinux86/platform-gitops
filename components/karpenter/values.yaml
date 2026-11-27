@@ -42,7 +42,16 @@ affinity:
               operator: DoesNotExist
 
 # Two replicas across the two system nodes. The controller is a leader-elected
-# singleton, so this buys failover, not throughput.
+# singleton, so this buys failover, not throughput — and is why it has no HPA: a
+# third replica would only be a second standby.
+#
+# The rest of the platform's resilience floor comes from the chart's defaults, not
+# from this file, and survives the `affinity` override above because Helm merges
+# maps: a required podAntiAffinity on hostname, a topology spread on zone
+# (DoNotSchedule), and a PDB with maxUnavailable: 1. Hard on zone is acceptable for
+# a standby: in a zone outage the replica that cannot move stays Pending while the
+# leader in the other zone keeps working. Verified by rendering chart 1.13.0 with
+# these values; re-check on a chart bump.
 replicas: 2
 
 controller:
