@@ -50,35 +50,58 @@ ClusterRoleBinding, or escape its namespace. Argo CD refuses before applying.
 ```
 apps/          one Application per component — the "where and in what order"
 components/    chart values and manifests    — the "what"
-tenants/       a chart admitting applications: one file each under registry/
+tenants/       a chart admitting applications — see Onboarding an application
 ```
 
 Separating them means changing a chart version touches one file and never the
 orchestration.
 
-`tenants/` is how an application from
-[`app-gitops`](https://github.com/gulinux86/app-gitops) is admitted. It is a chart;
-each application is one short file under `tenants/registry/`:
+## Onboarding an application
+
+An application is two files, one per repository, created once. No Terraform, no AWS
+account ID, no change to Argo CD.
+
+| Repository | File | Holds |
+|---|---|---|
+| [`app-gitops`](https://github.com/gulinux86/app-gitops) | `apps/<name>/values.yaml` | how it runs: image, port, route, resources, secrets |
+| this one | `tenants/registry/<name>.yaml` | what it may do: namespace, mesh, gateway, secrets, its Application |
+
+**Order:** app-gitops first — this repository's CI checks that the values file exists
+there. Then the application's own code repository releases through ci-templates'
+[`service-release`](https://github.com/gulinux86/ci-templates#service-release): every
+push to its `main` builds, scans, pushes to ECR and opens a pull request in app-gitops
+changing only `image:`. Nothing here changes on a release.
+
+Reference: [`hello-api`](https://github.com/gulinux86/hello-api)
+(`tenants/registry/hello-api.yaml`, `app-gitops/apps/hello-api/`).
+
+### `tenants/registry/<name>.yaml`
 
 ```yaml
-# tenants/registry/orders.yaml
-name: orders        # namespace app-orders, release orders, apps/orders/values.yaml
-team: checkout
-gateway: true       # its routes attach to the shared gateway
-secrets: true       # may read apps/orders/* in Secrets Manager (ClusterSecretStore `aws`)
-manifests: false    # also sync apps/orders/manifests/
-# services: [api, worker]   # several services, each apps/orders/<svc>/values.yaml
+name: orders          # required; the file must be orders.yaml
+team: checkout        # required
+gateway: true         # routes attach to the shared gateway
+secrets: true         # may read apps/orders/* in Secrets Manager
+manifests: false      # also sync apps/orders/manifests/
+# services: [api, worker]
+# revision: main
 ```
 
-The chart renders what the application repository may not decide for itself: the
-Namespace, its mesh, gateway and secrets labels, and an Application pinned to the
-`apps` project. The Application objects live here rather than there because an Application names its own project — a repository that can
-write them could name `platform`. What every tenant shares in this environment —
-the app-gitops URL and revision — is in `tenants/values.yaml`.
+| Key | Default | Effect |
+|---|---|---|
+| `name` | — | Namespace and Application `app-<name>`; values at `apps/<name>/`. Lowercase, digits, hyphens. |
+| `team` | — | Label `platform/team` on the Namespace. |
+| `gateway` | `false` | Label `gateway-access: "true"`: the shared gateway accepts its HTTPRoutes. Required when a values file sets `route:`. |
+| `secrets` | `false` | Label `platform/secrets: "true"`: the `ClusterSecretStore` `aws` serves the namespace, confined to `apps/<name>/*` by `components/policies/tenant-secrets.yaml`. |
+| `manifests` | `false` | Also syncs `apps/<name>/manifests/` (plain YAML that is not a service). |
+| `services` | — | One Application per service, `app-<name>-<svc>`, from `apps/<name>/<svc>/values.yaml`, all in `app-<name>`. Without it: one service, `apps/<name>/values.yaml`. |
+| `revision` | `main` | app-gitops revision to follow (default in `tenants/values.yaml`). |
 
-Admitting an application is these files and nothing else: no Terraform, no AWS
-account ID anywhere in this repository. `secrets: true` labels the Namespace so the
-`aws` store serves it; the admission policy confines it to `apps/<name>/`.
+Any other key fails the render. Every namespace joins the ambient mesh.
+
+The Namespace and Application live here, not in app-gitops, on purpose: the `apps`
+project cannot create a Namespace, and an Application names its own project — a
+repository that could write one could name `platform`.
 
 ## Sync waves
 
@@ -365,10 +388,11 @@ A tenant (`scripts/ci/check_tenants.py`) must have:
 The daily run is for app-gitops moving or deleting a file a tenant here still names:
 nothing in this repository changes when that happens.
 
-Locally (PyYAML and a clone of app-gitops):
+Locally (helm, PyYAML and a clone of app-gitops):
 
 ```bash
-python3 scripts/ci/check_tenants.py ../app-gitops
+helm template tenants tenants --namespace argocd >/tmp/tenants.yaml
+python3 scripts/ci/check_tenants.py ../app-gitops /tmp/tenants.yaml
 ```
 
 ## Phases
@@ -383,6 +407,10 @@ tears down cleanly with Karpenter nodes running — the teardown asks Karpenter 
 drain them while its controller is still alive.
 
 Phase 3 is observability, and it is here: the platform reports on itself and the mesh
-is visible. Next are External Secrets and Argo Rollouts, once there are applications
-to serve. One phase proven before the next, so a failure has one plausible cause
+is visible.
+
+Phase 4 is application delivery, and it is here: External Secrets, onboarding by
+registry file, and releases from a code repository to app-gitops through ci-templates
+— proven with `hello-api` up to the app-gitops pull request. Next are the Backstage
+template that writes the onboarding files, and Argo Rollouts. One phase proven before the next, so a failure has one plausible cause
 instead of five.
