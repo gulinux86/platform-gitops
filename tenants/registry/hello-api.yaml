@@ -1,0 +1,7 @@
+# hello-api: the reference service (github.com/gulinux86/hello-api), released through
+# ci-templates' service-release. Its values are in app-gitops (apps/hello-api/).
+name: hello-api
+team: platform
+
+# Served by the shared gateway at /hello.
+gateway: true
