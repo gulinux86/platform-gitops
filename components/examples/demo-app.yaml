@@ -25,7 +25,11 @@ metadata:
   name: demo
   namespace: app-demo
 spec:
-  replicas: 1
+  # Two, spread across nodes and zones: the resilience floor every Deployment in an
+  # app-* namespace is held to (components/policies/workload-resilience.yaml). With
+  # one replica and no spread the API server refuses it, and the route below has no
+  # backend.
+  replicas: 2
   selector:
     matchLabels:
       app: demo
@@ -34,6 +38,19 @@ spec:
       labels:
         app: demo
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: demo
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: demo
       containers:
         - name: nginx
           # The unprivileged variant, not the stock nginx image. The official one
@@ -48,12 +65,14 @@ spec:
           image: nginxinc/nginx-unprivileged:1.27-alpine
           ports:
             - containerPort: 8080
+          # Memory request equals its limit, the convention across the repository:
+          # Karpenter packs by requests.
           resources:
             requests:
               cpu: 10m
-              memory: 16Mi
+              memory: 32Mi
             limits:
-              memory: 64Mi
+              memory: 32Mi
           readinessProbe:
             httpGet:
               path: /
@@ -64,6 +83,19 @@ spec:
             runAsUser: 101 # the image's built-in nginx user
             capabilities:
               drop: ["ALL"]
+---
+# One of the two may be evicted at a time, so a node drain never empties the route.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: demo
+  namespace: app-demo
+spec:
+  maxUnavailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app: demo
 ---
 apiVersion: v1
 kind: Service
