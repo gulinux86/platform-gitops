@@ -4,21 +4,27 @@
 # Rule 1 of this repository has always said "use an ExternalSecret"; until this
 # chart, nothing in the cluster could act on one.
 #
-# Authentication: the operator itself has NO AWS permissions — no IRSA annotation,
-# no Pod Identity association. Each namespace authenticates on its own: its
-# SecretStore presents a token for a ServiceAccount in that namespace, and assumes
-# an IAM role whose trust policy names exactly that namespace and ServiceAccount,
-# and whose policy reads only that application's prefix in Secrets Manager.
+# Authentication: the controller holds one AWS identity, through EKS Pod Identity —
+# eks-terraform (workload/modules/external-secrets-identity) binds a role reading
+# apps/* in Secrets Manager to this namespace's `external-secrets` ServiceAccount.
+# Nothing here names the role or the account: the binding lives on the AWS side.
 #
-# That is what isolates tenants, and it has to be in IAM rather than here: the
-# `apps` AppProject lets an application create any namespaced object, a SecretStore
-# included. One pointing at another tenant's role fails at STS, because the token it
-# presents is for the wrong namespace. A controller with its own broad role would
-# instead serve any SecretStore that asked, and every tenant could read every
-# secret.
+# Every application's ExternalSecret is served through one ClusterSecretStore, `aws`
+# (cluster-secret-store.yaml), which uses that identity. Admitting an application is
+# therefore a change in Git, never a Terraform apply.
 #
-# The per-tenant role and its ServiceAccount are the next step (identity per
-# application); this file installs the operator they will use.
+# What keeps applications out of each other's secrets is not IAM, since the role can
+# read every application's prefix, but the API server: components/policies/
+# tenant-secrets.yaml admits an ExternalSecret in app-<name> only for keys under
+# apps/<name>/, and refuses in application namespaces
+# every object that would use the controller's credentials on its own terms — a
+# SecretStore with no auth of its own, a PushSecret, a generator.
+
+# The name eks-terraform's Pod Identity association binds the role to. The chart
+# would derive the same one from the release name; it is pinned so that renaming the
+# Application cannot silently leave the controller with no credentials.
+serviceAccount:
+  name: external-secrets
 
 # Two of each component, on two nodes, never both evicted at once — the floor every
 # component on the traffic or deploy path is held to (see the README's "Availability

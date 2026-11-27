@@ -13,9 +13,13 @@ The cluster itself, Argo CD, and the AWS-side plumbing come from
 encryption — anyone can decode it in one command, and this repository is public.
 Real secrets go to AWS Secrets Manager and are referenced with an `ExternalSecret`,
 so Git holds the pointer and never the value. The External Secrets Operator
-(`components/external-secrets/`) holds no AWS permissions itself: each namespace's
-`SecretStore` assumes an IAM role that trusts only that namespace's ServiceAccount
-and reads only that application's prefix, so one tenant cannot read another's.
+(`components/external-secrets/`) reads `apps/*` with one identity (EKS Pod Identity,
+bound in eks-terraform) through one `ClusterSecretStore`, `aws`, so admitting an
+application never needs Terraform. What stops one application reading another's
+secrets is an admission policy (`components/policies/tenant-secrets.yaml`): in
+`app-<name>`, an `ExternalSecret` may name only keys under `apps/<name>/`, and
+`SecretStore`s, `PushSecret`s and generators — which would act with the operator's
+credentials — are refused.
 
 **2. Nothing here creates an AWS resource.** No `type: LoadBalancer`, no
 `kind: Ingress`. A resource a controller creates from a manifest never enters
@@ -61,22 +65,20 @@ each application is one short file under `tenants/registry/`:
 name: orders        # namespace app-orders, release orders, apps/orders/values.yaml
 team: checkout
 gateway: true       # its routes attach to the shared gateway
-secrets: true       # ServiceAccount + SecretStore reading apps/orders/* in Secrets Manager
+secrets: true       # may read apps/orders/* in Secrets Manager (ClusterSecretStore `aws`)
 manifests: false    # also sync apps/orders/manifests/
 # services: [api, worker]   # several services, each apps/orders/<svc>/values.yaml
 ```
 
 The chart renders what the application repository may not decide for itself: the
-Namespace, its mesh and gateway labels, the identity it reads secrets with, and an
-Application pinned to the `apps` project. The Application objects live here rather
-than there because an Application names its own project — a repository that can
+Namespace, its mesh, gateway and secrets labels, and an Application pinned to the
+`apps` project. The Application objects live here rather than there because an Application names its own project — a repository that can
 write them could name `platform`. What every tenant shares in this environment —
-the AWS account and region, the naming of the per-tenant IAM role, the app-gitops
-URL — is in `tenants/values.yaml`, and nowhere else.
+the app-gitops URL and revision — is in `tenants/values.yaml`.
 
-`secrets: true` needs the tenant's IAM role, which Terraform creates
-(`tenant_secrets` in eks-terraform's workload tfvars). The SecretStore reports not
-Ready until it exists.
+Admitting an application is these files and nothing else: no Terraform, no AWS
+account ID anywhere in this repository. `secrets: true` labels the Namespace so the
+`aws` store serves it; the admission policy confines it to `apps/<name>/`.
 
 ## Sync waves
 
@@ -90,6 +92,7 @@ annotation makes the order explicit:
 | 0 | Admission policies | Built into the API server; must exist before wave 11 admits any workload |
 | 1 | cert-manager | Prerequisite for the ADOT operator and for issued TLS |
 | 1 | External Secrets Operator | Turns Secrets Manager entries into Secrets; before anything that consumes one |
+| 2 | ClusterSecretStore `aws` | An instance of wave 1's CRDs; before wave 11's tenants use it |
 | 2 | istio-base | Istio's CRDs and cluster roles |
 | 3 | istiod | Control plane, `profile: ambient` |
 | 4 | istio-cni | Node redirection — ambient has no sidecar to intercept |

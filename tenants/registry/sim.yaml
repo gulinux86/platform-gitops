@@ -10,10 +10,10 @@ team: platform
 # Routes attach to the shared gateway (the Namespace gets gateway-access: "true").
 gateway: true
 
-# A ServiceAccount and SecretStore in the namespace, reading apps/sim/* through the
-# IAM role Terraform creates for this tenant. sim has no secrets; it carries a store
-# so the chain from tenant to IAM is exercised on every deploy, not first discovered
-# by the first application that needs it.
+# The namespace may read apps/sim/* in Secrets Manager through the ClusterSecretStore
+# `aws`. sim reads no secrets; it is admitted so the label, the store's condition and
+# the admission policy are exercised on every deploy, not first discovered by the
+# first application that needs them.
 secrets: true
 
 # apps/sim/manifests/ — the load generator, which is not a service.

@@ -2,7 +2,6 @@ apiVersion: v2
 name: tenants
 description: >-
   Admits applications from app-gitops: one file per application under registry/,
-  rendered into its Namespace, its secrets identity and its Argo CD Application
-  under the apps project.
+  rendered into its Namespace and its Argo CD Application under the apps project.
 type: application
-version: 0.1.0
+version: 0.2.0
