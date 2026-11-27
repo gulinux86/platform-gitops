@@ -2,8 +2,9 @@
 # reaches main and Argo CD.
 #
 #   validate  every manifest here against the Kubernetes and CRD schemas (Helm values
-#             files under components/ are not manifests and are skipped), then every
-#             tenant against the admission shape and the app-gitops files it points at
+#             files under components/ are not manifests and are skipped), the tenants
+#             chart rendered the way Argo CD renders it, then every tenant against the
+#             admission shape and the app-gitops files it points at
 #             (scripts/ci/check_tenants.py)
 #   lint      actionlint on the workflows, shellcheck on the scripts
 #
@@ -56,10 +57,16 @@ jobs:
 
       # A manifest is a file with a top-level kind; that is what tells
       # components/karpenter/nodepool.yaml from components/karpenter/values.yaml.
+      # tenants/ is a chart, whose templates are not manifests until rendered: it is
+      # rendered first and validated as the output, which is what Argo CD applies.
+      - name: Render tenants
+        run: helm template tenants tenants --namespace argocd >"$RUNNER_TEMP/tenants.yaml"
+
       - name: Kubernetes and CRD schemas
         run: |
           set -euo pipefail
-          mapfile -t MANIFESTS < <(git ls-files '*.yaml' '*.yml' | xargs grep -l -E '^kind:')
+          mapfile -t MANIFESTS < <(git ls-files '*.yaml' '*.yml' | grep -v '^tenants/' | xargs grep -l -E '^kind:')
+          MANIFESTS+=("$RUNNER_TEMP/tenants.yaml")
           printf '%s\n' "${MANIFESTS[@]}"
           kubeconform -strict -summary -output text \
             -kubernetes-version "$KUBERNETES_SCHEMA_VERSION" \
@@ -71,7 +78,7 @@ jobs:
         run: git clone --quiet --no-checkout "$APP_GITOPS" "$RUNNER_TEMP/app-gitops"
 
       - name: Tenants
-        run: python3 scripts/ci/check_tenants.py "$RUNNER_TEMP/app-gitops"
+        run: python3 scripts/ci/check_tenants.py "$RUNNER_TEMP/app-gitops" "$RUNNER_TEMP/tenants.yaml"
 
   lint:
     runs-on: ubuntu-latest
